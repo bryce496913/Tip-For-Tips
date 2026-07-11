@@ -1,334 +1,178 @@
-//
-//  Receipts.swift
-//  Tips For Tips
-//
-//  Created by Aditi Abrol on 7/4/24.
-//
-
-// !TO DO: Add delete + zoom
-
 import SwiftUI
 
 struct Receipts: View {
-    @State private var showPhotoCapture = false
-    @State private var showSavedReceipts = false
+    @State private var activeSheet: ReceiptSheet?
     @State private var savedReceipts: [Receipt] = []
     @State private var capturedImage: UIImage?
-    @State private var photoName: String = ""
-    @State private var showingNamePhotoView = false
-    
+    @State private var photoName = ""
+
     var body: some View {
-        ZStack {
-            AppTheme.background.ignoresSafeArea()
-            
-            VStack {
-                Image("Receipts")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 250, height: 250)
-                
-                HStack(spacing: 0) {
-                    Text("Receipts").foregroundColor(AppTheme.accent)
-                }
-                .appFont(.h1)
-                
-                Spacer()
-                
-                Button(action: {
-                    self.showPhotoCapture = true
-                }) {
-                    Label("Take Photo", systemImage: "camera")
-                        .foregroundColor(AppTheme.text)
-                        .padding()
-                        .background(AppTheme.accent)
-                        .cornerRadius(15)
-                        .appFont(.h3)
-                }
-                .padding()
-                .sheet(isPresented: $showPhotoCapture) {
-                    PhotoCaptureView(onPhotoCapture: { image in
-                        capturedImage = image
-                        showingNamePhotoView = true
-                    })
-                }
-                
-                Button(action: {
-                    self.showSavedReceipts = true
-                }) {
-                    Label("Load Receipts", systemImage: "photo.on.rectangle")
-                        .foregroundColor(AppTheme.text)
-                        .padding()
-                        .background(AppTheme.accent)
-                        .cornerRadius(15)
-                        .appFont(.h3)
-                }
-                .padding()
-                .sheet(isPresented: $showSavedReceipts) {
-                    NavigationStack {
-                        SavedReceiptsView(savedReceipts: $savedReceipts)
-                            .toolbar { Button("Close") { showSavedReceipts = false } }
-                            .navigationTitle("Saved Receipts")
-                            .navigationBarTitleDisplayMode(.inline)
+        AppScreen {
+            ScrollView {
+                VStack(spacing: AppSpacing.section) {
+                    ScreenTitle(text: "Receipts", subtitle: "Save receipt photos locally and reopen them later.")
+                    ThemedCard {
+                        PrimaryButton(title: "Add Receipt", systemImage: "camera") { activeSheet = .camera }
+                        SecondaryButton(title: "Saved Receipts", systemImage: "photo.on.rectangle") { activeSheet = .saved }
+                    }
+                    if savedReceipts.isEmpty {
+                        EmptyStateView(systemImage: "receipt", title: "No saved receipts", message: "Add a receipt photo to keep a local copy in this app.")
+                    } else {
+                        Text("\(savedReceipts.count) saved receipt\(savedReceipts.count == 1 ? "" : "s")").appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.8))
                     }
                 }
-                
-                Spacer()
+                .padding(AppSpacing.screen)
             }
         }
-        .sheet(isPresented: $showingNamePhotoView) {
-            NamePhotoView(photoName: $photoName) {
-                if let imageData = capturedImage?.pngData(), !photoName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let newReceipt = Receipt(imageData: imageData, name: photoName)
-                    savedReceipts.append(newReceipt)
-                    saveReceiptsToStorage()
-                }
-                self.showingNamePhotoView = false
-                self.capturedImage = nil
-                self.photoName = ""
+        .navigationTitle("Receipts")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: loadReceiptsFromStorage)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .camera:
+                PhotoCaptureView { image in capturedImage = image; activeSheet = .name }
+            case .name:
+                NamePhotoView(photoName: $photoName, image: capturedImage, onCancel: { resetCapture() }, onSave: saveCapturedReceipt)
+            case .saved:
+                NavigationStack { SavedReceiptsView(savedReceipts: $savedReceipts).toolbar { Button("Close") { activeSheet = nil } } }
             }
-        }
-        .onAppear {
-            loadReceiptsFromStorage()
         }
     }
-    
+
+    private func saveCapturedReceipt() {
+        guard let imageData = capturedImage?.pngData(), !photoName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { resetCapture(); return }
+        savedReceipts.append(Receipt(imageData: imageData, name: photoName.trimmingCharacters(in: .whitespacesAndNewlines)))
+        saveReceiptsToStorage(); resetCapture()
+    }
+
+    private func resetCapture() { capturedImage = nil; photoName = ""; activeSheet = nil }
+
     private func saveReceiptsToStorage() {
         do {
             let data = try JSONEncoder().encode(savedReceipts)
             guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
-            let fileURL = documentsURL.appendingPathComponent("receipts.json")
-            try data.write(to: fileURL)
-        } catch {
-            return
-        }
+            try data.write(to: documentsURL.appendingPathComponent("receipts.json"))
+        } catch { }
     }
-    
+
     private func loadReceiptsFromStorage() {
         do {
             guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
-            let fileURL = documentsURL.appendingPathComponent("receipts.json")
-            let data = try Data(contentsOf: fileURL)
+            let data = try Data(contentsOf: documentsURL.appendingPathComponent("receipts.json"))
             savedReceipts = try JSONDecoder().decode([Receipt].self, from: data)
-        } catch {
-            savedReceipts = []
-        }
+        } catch { savedReceipts = [] }
     }
 }
+
+private enum ReceiptSheet: String, Identifiable { case camera, name, saved; var id: String { rawValue } }
 
 struct PhotoCaptureView: View {
     var onPhotoCapture: (UIImage) -> Void
-
-    @State private var orientation: UIImage.Orientation = .up
-
-    var body: some View {
-        CameraViewControllerRepresentable(onPhotoCapture: { image in
-            // Determine the orientation of the captured image
-            if image.size.width > image.size.height {
-                // Landscape orientation
-                orientation = .right
-            } else {
-                // Portrait orientation
-                orientation = .up
-            }
-
-            // Rotate the image if necessary
-            let rotatedImage = image.rotate(radians: orientation.radians)
-
-            // Pass the rotated image to the completion handler
-            onPhotoCapture(rotatedImage)
-        })
-    }
-}
-
-extension UIImage.Orientation {
-    var radians: CGFloat {
-        switch self {
-        case .up, .upMirrored:
-            return 0
-        case .right, .rightMirrored:
-            return .pi / 2
-        case .down, .downMirrored:
-            return .pi
-        case .left, .leftMirrored:
-            return -.pi / 2
-        @unknown default:
-            return 0
-        }
-    }
+    var body: some View { CameraViewControllerRepresentable(onPhotoCapture: { image in onPhotoCapture(image.normalizedForReceipt()) }) }
 }
 
 extension UIImage {
-    func rotate(radians: CGFloat) -> UIImage {
-        var newSize = CGRect(origin: CGPoint.zero, size: self.size).applying(CGAffineTransform(rotationAngle: radians)).size
-        // Trim off the extremely small float value to prevent core graphics from rounding it up
-        newSize.width = floor(newSize.width)
-        newSize.height = floor(newSize.height)
-
-        UIGraphicsBeginImageContextWithOptions(newSize, true, self.scale)
-        guard let context = UIGraphicsGetCurrentContext() else { return self }
-
-        // Move origin to middle
-        context.translateBy(x: newSize.width / 2, y: newSize.height / 2)
-        // Rotate around middle
-        context.rotate(by: radians)
-        // Draw the rotated image
-        self.draw(in: CGRect(x: -self.size.width / 2, y: -self.size.height / 2, width: self.size.width, height: self.size.height))
-
-        let newImage = UIGraphicsGetImageFromCurrentImageContext()
+    func normalizedForReceipt() -> UIImage {
+        if imageOrientation == .up { return self }
+        UIGraphicsBeginImageContextWithOptions(size, false, scale)
+        draw(in: CGRect(origin: .zero, size: size))
+        let normalized = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
-
-        return newImage ?? self
+        return normalized ?? self
     }
 }
 
 struct SavedReceiptsView: View {
     @Binding var savedReceipts: [Receipt]
+    private let columns = [GridItem(.adaptive(minimum: 140), spacing: AppSpacing.section)]
 
     var body: some View {
         AppScreen {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))]) {
-                    ForEach(savedReceipts.indices, id: \.self) { index in
-                        let receipt = savedReceipts[index]
-                        NavigationLink(destination: FullImageView(image: receipt.image)) {
-                            VStack {
-                                Image(uiImage: receipt.image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(height: 100)
-                                    .cornerRadius(10)
-                                Text(receipt.name)
-                                    .foregroundColor(AppTheme.text)
-                                    .padding(.top, 5)
+                if savedReceipts.isEmpty {
+                    EmptyStateView(systemImage: "receipt", title: "No saved receipts", message: "Saved receipt photos will appear here.")
+                } else {
+                    LazyVGrid(columns: columns, spacing: AppSpacing.section) {
+                        ForEach(savedReceipts) { receipt in
+                            NavigationLink(destination: FullImageView(image: receipt.image, title: receipt.name)) {
+                                ThemedCard {
+                                    Image(uiImage: receipt.image).resizable().scaledToFit().frame(maxHeight: 140).clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityHidden(true)
+                                    Text(receipt.name).appFont(.paragraph).foregroundStyle(AppTheme.text).lineLimit(2)
+                                }
                             }
+                            .accessibilityLabel("Open receipt named \(receipt.name)")
                         }
                     }
-                }
-                .padding()
-                if savedReceipts.isEmpty {
-                    Text("No saved receipts yet.")
-                        .appFont(.paragraph)
-                        .foregroundStyle(AppTheme.text)
-                        .padding()
+                    .padding(AppSpacing.screen)
                 }
             }
         }
+        .navigationTitle("Saved Receipts")
+        .navigationBarTitleDisplayMode(.inline)
     }
-
 }
 
 struct FullImageView: View {
     let image: UIImage
-
-    @State private var scale: CGFloat = 1.2
-    @State private var lastScale: CGFloat = 1.2
+    let title: String
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
 
     var body: some View {
-        NavigationStack {
-            VStack {
-                Spacer()
+        AppScreen {
+            ScrollView([.horizontal, .vertical]) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                scale = lastScale * value
-                            }
-                            .onEnded { value in
-                                lastScale = scale
-                            }
-                    )
                     .scaleEffect(scale)
-                    .padding()
-                    .background(AppTheme.background)
-                    .ignoresSafeArea()
-                Spacer()
+                    .padding(AppSpacing.screen)
+                    .gesture(MagnificationGesture().onChanged { scale = max(1, min(lastScale * $0, 5)) }.onEnded { _ in lastScale = scale })
             }
         }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 struct NamePhotoView: View {
+    @Environment(\.dismiss) private var dismiss
     @Binding var photoName: String
+    let image: UIImage?
+    var onCancel: () -> Void
     var onSave: () -> Void
-    
-    var body: some View {
-        VStack {
-            Text("Enter photo name")
-                .foregroundColor(AppTheme.text)
-                .appFont(.h2)
-            
-            TextField("", text: $photoName)
-                .padding()
-                .background(AppTheme.text)
-                .foregroundColor(AppTheme.background)
-                .cornerRadius(10)
-                .padding()
-            
-            HStack {
-                Button("Cancel") {
-                    photoName = ""
-                    onSave()
-                }
-                .padding()
-                .background(AppTheme.highlight)
-                .foregroundColor(AppTheme.text)
-                .cornerRadius(10)
-                
-                Button("Save") {
-                    onSave()
-                }
-                .padding()
-                .background(AppTheme.highlight)
-                .foregroundColor(AppTheme.text)
-                .cornerRadius(10)
-            }
-            .padding()
-        }
-        .padding()
-        .background(AppTheme.background)
-        .cornerRadius(20)
-        .padding()
-    }
-}
 
-struct Receipts_Previews: PreviewProvider {
-    static var previews: some View {
-        Receipts()
+    var body: some View {
+        NavigationStack {
+            AppScreen {
+                VStack(spacing: AppSpacing.section) {
+                    ScreenTitle(text: "Name Receipt")
+                    if let image { Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 260).clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityLabel("Receipt preview") }
+                    ThemedCard {
+                        Text("Receipt Name").appFont(.h2)
+                        TextField("Dinner receipt", text: $photoName).textFieldStyle(AppTextFieldStyle())
+                    }
+                    PrimaryButton(title: "Save", systemImage: "checkmark", isDisabled: photoName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { onSave(); dismiss() }
+                    SecondaryButton(title: "Cancel") { onCancel(); dismiss() }
+                    Spacer()
+                }
+                .padding(AppSpacing.screen)
+            }
+            .navigationTitle("Add Receipt")
+        }
     }
 }
 
 struct CameraViewControllerRepresentable: UIViewControllerRepresentable {
     let onPhotoCapture: (UIImage) -> Void
-    
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let imagePicker = UIImagePickerController()
-        imagePicker.sourceType = .camera
-        imagePicker.delegate = context.coordinator
-        return imagePicker
-    }
-    
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
-    }
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onPhotoCapture: onPhotoCapture)
-    }
-    
-    class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+    func makeUIViewController(context: Context) -> UIImagePickerController { let picker = UIImagePickerController(); picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary; picker.delegate = context.coordinator; return picker }
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) { }
+    func makeCoordinator() -> Coordinator { Coordinator(onPhotoCapture: onPhotoCapture) }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
         let onPhotoCapture: (UIImage) -> Void
-        
-        init(onPhotoCapture: @escaping (UIImage) -> Void) {
-            self.onPhotoCapture = onPhotoCapture
-        }
-        
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
-            if let image = info[.originalImage] as? UIImage {
-                onPhotoCapture(image)
-            }
-            picker.dismiss(animated: true, completion: nil)
-        }
+        init(onPhotoCapture: @escaping (UIImage) -> Void) { self.onPhotoCapture = onPhotoCapture }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) { if let image = info[.originalImage] as? UIImage { onPhotoCapture(image) }; picker.dismiss(animated: true) }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { picker.dismiss(animated: true) }
     }
 }
 
@@ -336,8 +180,7 @@ struct Receipt: Codable, Identifiable {
     var id = UUID()
     var imageData: Data
     var name: String
-    
-    var image: UIImage {
-        UIImage(data: imageData) ?? UIImage()
-    }
+    var image: UIImage { UIImage(data: imageData) ?? UIImage() }
 }
+
+#Preview { NavigationStack { Receipts() } }

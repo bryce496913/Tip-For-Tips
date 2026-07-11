@@ -6,14 +6,25 @@ struct TipCalculator: View {
     @State private var tipAmount = ""
     @State private var isPercentageSelected = true
     @State private var isServicePickerPresented = false
+    @State private var didCalculate = false
 
     private let services = ["Restaurant with table service", "Bars", "Yellow Taxi", "Uber/Lyft driver", "Food delivery", "Shuttle driver", "Doorman", "Porter", "Housekeeping", "Room Service", "Tour Guides", "Tour Bus Drivers", "Spa", "Hairdressers/Barbers", "Nail Salon"]
+    private func decimalValue(_ text: String) -> Double? {
+        let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.locale = .current
+        if let n = formatter.number(from: text), n.doubleValue >= 0 { return n.doubleValue }
+        if let n = Double(text), n >= 0 { return n }
+        return nil
+    }
+
+    private func reset() { totalBill = ""; tipAmount = ""; isPercentageSelected = true; didCalculate = false }
+
     private let recommendedTips: [String: String] = ["Restaurant with table service": "15-20%", "Bars": "15-20% or $1-$2 per drink", "Yellow Taxi": "10-20%", "Uber/Lyft driver": "10-20%", "Food delivery": "15-20%", "Shuttle driver": "$2-$5 per person", "Doorman": "$1-$5", "Porter": "$1-$2 per bag", "Housekeeping": "$2-$5 per night", "Room Service": "15-20%", "Tour Guides": "$2-$5 per participating person for local tours. 15-20% of the ticket price for a day trip", "Tour Bus Drivers": "$2-$5 per person", "Spa": "15-20%", "Hairdressers/Barbers": "15-20%", "Nail Salon": "15-20%"]
 
     private var selectedService: String { services.indices.contains(selectedServiceIndex) ? services[selectedServiceIndex] : services[0] }
     private var recommendedTip: String { recommendedTips[selectedService] ?? "" }
-    private var billValue: Double { max(Double(totalBill) ?? 0, 0) }
-    private var tipValue: Double { max(Double(tipAmount) ?? 0, 0) }
+    private var billValue: Double { max(decimalValue(totalBill) ?? 0, 0) }
+    private var tipValue: Double { max(decimalValue(tipAmount) ?? 0, 0) }
+    private var canCalculate: Bool { decimalValue(totalBill) != nil && decimalValue(tipAmount) != nil }
     private var calculatedTip: Double { isPercentageSelected ? billValue * tipValue / 100 : tipValue }
     private var totalAmount: Double { billValue + calculatedTip }
 
@@ -53,13 +64,21 @@ struct TipCalculator: View {
                             .multilineTextAlignment(.center)
                     }
 
+                    PrimaryButton(title: "Calculate", systemImage: "equal.circle", isDisabled: !canCalculate) { didCalculate = true }
+                    SecondaryButton(title: "Reset", systemImage: "arrow.counterclockwise") { reset() }
+
                     ThemedCard {
-                        Text("Tip Amount: \(calculatedTip, format: .currency(code: "USD"))")
-                            .appFont(.h2)
-                            .foregroundStyle(AppTheme.highlight)
-                        Text("Bill Total: \(totalAmount, format: .currency(code: "USD"))")
-                            .appFont(.h2)
-                            .foregroundStyle(AppTheme.highlight)
+                        Text("Calculation Result").appFont(.h2)
+                        if didCalculate {
+                            Text("Tip Amount: \(calculatedTip, format: .currency(code: "USD"))")
+                                .appFont(.h2)
+                                .foregroundStyle(AppTheme.highlight)
+                            Text("Total Amount: \(totalAmount, format: .currency(code: "USD"))")
+                                .appFont(.h2)
+                                .foregroundStyle(AppTheme.highlight)
+                        } else {
+                            Text("Enter a bill and tip, then tap Calculate.").appFont(.paragraph)
+                        }
                     }
                 }
                 .padding(20)

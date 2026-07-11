@@ -13,8 +13,14 @@ struct NotePad: View {
                 ThemedCard {
                     PrimaryButton(title: "New Note", systemImage: "square.and.pencil") { showNewNote = true }
                     NavigationLink { SavedNotesView(savedNotes: $savedNotes, onNoteSelected: { selectedNote = $0 }) } label: {
-                        Label("Load Note", systemImage: "folder").appFont(.h3).frame(maxWidth: .infinity, minHeight: 44)
-                    }.buttonStyle(AppButtonStyleProxy())
+                        Label("Saved Notes", systemImage: "folder").appFont(.h3).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, AppSpacing.section)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(AppTheme.surface)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(AppTheme.accent, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 Spacer()
             }.padding(20)
@@ -89,7 +95,7 @@ struct SavedNotesView: View {
         AppScreen {
             List {
                 if savedNotes.isEmpty {
-                    Text("No saved notes yet.").appFont(.paragraph).foregroundStyle(AppTheme.text).listRowBackground(AppTheme.surface)
+                    EmptyStateView(systemImage: "note.text", title: "No saved notes", message: "Create a note and it will appear here.").listRowBackground(AppTheme.background)
                 }
                 ForEach(savedNotes) { note in
                     Button(note.name) { onNoteSelected(note) }
@@ -108,12 +114,6 @@ struct SavedNotesView: View {
         guard let documentsURL = try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return }
         try? FileManager.default.removeItem(at: documentsURL.appendingPathComponent(note.name))
         savedNotes.removeAll { $0.id == note.id }
-    }
-}
-
-private struct AppButtonStyleProxy: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.foregroundStyle(AppTheme.text).padding(.horizontal,16).background(AppTheme.highlight.opacity(configuration.isPressed ? 0.72 : 1)).clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
