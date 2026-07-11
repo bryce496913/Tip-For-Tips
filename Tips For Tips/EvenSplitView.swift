@@ -1,122 +1,59 @@
-//
-//  EvenSplitView.swift
-//  Tips For Tips
-//
-//  Created by Aditi Abrol on 23/4/24.
-//
-
-//TODO: The math is wrong with the tip %
-
 import SwiftUI
 
 struct EvenSplitView: View {
-    @Environment(\.presentationMode) var presentationMode
-    
+    @Environment(\.dismiss) private var dismiss
     @State private var totalBill = ""
     @State private var numberOfPeople = ""
     @State private var tipAmount = ""
-    @State private var splitAmount = ""
-    
+    @State private var splitAmount: Double?
+
+    private var validBill: Double? { positiveDouble(totalBill, allowZero: true) }
+    private var validPeople: Double? { positiveDouble(numberOfPeople, allowZero: false) }
+    private var validTip: Double? { positiveDouble(tipAmount, allowZero: true) }
+    private var canSplit: Bool { validBill != nil && validPeople != nil && validTip != nil }
+
     var body: some View {
-        NavigationView {
-            VStack {
-                Spacer()
-                
-                TextField("Total Bill", text: $totalBill)
-                    .padding(2)
-                    .keyboardType(.decimalPad)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 15)
-                            .stroke(Color.appBlue, lineWidth: 5)
-                    )
-                    .padding(.horizontal, 30)
-                    .font(.title)
-                    .multilineTextAlignment(.center)
-                    .toolbar {
-                        ToolbarItem(placement: .keyboard) {
-                            Button("Done") {
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        NavigationStack {
+            AppScreen {
+                ScrollView {
+                    VStack(spacing: 18) {
+                        ScreenTitle(text: "Even Split")
+                        ThemedCard {
+                            Text("Split Details") .appFont(.h2)
+                            TextField("Total Bill", text: $totalBill).keyboardType(.decimalPad).textFieldStyle(AppTextFieldStyle()).multilineTextAlignment(.center)
+                            TextField("Number of People", text: $numberOfPeople).keyboardType(.numberPad).textFieldStyle(AppTextFieldStyle()).multilineTextAlignment(.center)
+                            TextField("Tip Amount", text: $tipAmount).keyboardType(.decimalPad).textFieldStyle(AppTextFieldStyle()).multilineTextAlignment(.center)
+                            PrimaryButton(title: "Split", isDisabled: !canSplit) { calculateSplit() }
+                        }
+                        ThemedCard {
+                            Text("Split Amount: \((splitAmount ?? 0), format: .currency(code: "USD"))")
+                                .appFont(.h2)
+                                .foregroundStyle(AppTheme.highlight)
+                                .accessibilityLabel("Split amount \((splitAmount ?? 0), format: .currency(code: "USD"))")
+                            if !canSplit {
+                                Text("Enter a non-negative bill, at least one person, and a non-negative tip amount.")
+                                    .appFont(.paragraph)
                             }
                         }
                     }
-                
                     .padding(20)
-                
-                TextField("Number of People", text: $numberOfPeople)
-                    .padding(2)
-                    .keyboardType(.decimalPad)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 15)
-                            .stroke(Color.appBlue, lineWidth: 5)
-                    )
-                    .padding(.horizontal, 40)
-                    .font(.title)
-                    .multilineTextAlignment(.center)
-                
-                    .padding(10)
-                
-                TextField("Tip % Amount", text: $tipAmount)
-                    .padding(2)
-                    .keyboardType(.decimalPad)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 15)
-                            .stroke(Color.appBlue, lineWidth: 5)
-                    )
-                    .padding(.horizontal, 30)
-                    .font(.title)
-                    .multilineTextAlignment(.center)
-                
-                    .padding(20)
-                
-                
-                Button(action: {
-                    calculateSplit()
-                }) {
-                    Text("Split")
-                        .padding()
-                        .background(Color.appDarkBlue)
-                        .foregroundColor(.white)
-                        .cornerRadius(15)
-                        .font(.title)
                 }
-                .padding()
-                
-                Text("Split Amount: $\(splitAmount)")
-                    .padding()
-                    .font(.title)
-                    .foregroundColor(Color.appGold)
-                
-                Spacer()
             }
-            .navigationBarTitle("Even Split", displayMode: .inline)
-            .foregroundColor(Color.appWhite)
-            .navigationBarItems(trailing:
-                Button("Close") {
-                    self.presentationMode.wrappedValue.dismiss()
-                }
-            )
-            .background(Color.appBlack)
+            .navigationTitle("Even Split")
+            .toolbar { Button("Close") { dismiss() } }
         }
+        .hideKeyboardToolbar()
     }
-    
+
     private func calculateSplit() {
-        guard let bill = Double(totalBill),
-              let people = Double(numberOfPeople),
-              let tip = Double(tipAmount) else {
-            return
-        }
-        
-        let totalAmount = bill + tip
-        let individualAmount = totalAmount / people
-        splitAmount = String(format: "%.2f", individualAmount)
+        guard let bill = validBill, let people = validPeople, let tip = validTip else { return }
+        splitAmount = (bill + tip) / people
+    }
+
+    private func positiveDouble(_ value: String, allowZero: Bool) -> Double? {
+        guard let number = Double(value), number >= 0, allowZero || number > 0 else { return nil }
+        return number
     }
 }
 
-struct EvenSplitView_Previews: PreviewProvider {
-    static var previews: some View {
-        EvenSplitView()
-    }
-}
+#Preview { EvenSplitView() }

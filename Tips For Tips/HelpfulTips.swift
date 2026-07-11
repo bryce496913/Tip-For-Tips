@@ -1,38 +1,27 @@
-//
-//  HelpfulTips.swift
-//  Tips For Tips
-//
-//  Created by Aditi Abrol on 7/4/24.
-//
-
 import SwiftUI
 
 struct HelpfulTips: View {
-
     var body: some View {
-        ZStack {
-            Color.appBlack.edgesIgnoringSafeArea(.all)
-            
-            VStack {
+        AppScreen {
+            VStack(spacing: 24) {
                 Image("HelpfulTips")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 250, height: 250)
-                
-                HStack(spacing: 0) {
-                    Text("Helpful ").foregroundColor(Color.appBlue)
-                    Text("Tips").foregroundColor(Color.appGold)
+                    .frame(width: 190, height: 190)
+                    .accessibilityHidden(true)
+                ScreenTitle(text: "Helpful Tips")
+                ThemedCard {
+                    Text("Select a service in Tip Calculator to view the existing tip recommendations for restaurants, rides, deliveries, hotels, salons, tours, and spa visits.")
+                        .appFont(.paragraph)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.largeTitle)
-                
                 Spacer()
             }
+            .padding(20)
         }
+        .navigationTitle("Helpful Tips")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-struct HelpfulTips_Previews: PreviewProvider {
-    static var previews: some View {
-        HelpfulTips()
-    }
-}
+#Preview { HelpfulTips() }
