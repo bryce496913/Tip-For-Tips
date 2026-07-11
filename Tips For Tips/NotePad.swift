@@ -1,233 +1,120 @@
-//
-//  NotePad.swift
-//  Tips For Tips
-//
-//  Created by Aditi Abrol on 7/4/24.
-//
-
 import SwiftUI
 
 struct NotePad: View {
-    // Wrapper struct to make String identifiable
-    struct IdentifiedNote: Identifiable {
-        var id: String { name }
-        let name: String
-    }
-    
     @State private var showNewNote = false
-    @State private var showSavedNotes = false
-    @State private var savedNotes: [IdentifiedNote] = []
-    @State private var selectedNote: String?
-    
+    @State private var savedNotes: [NoteFile] = []
+    @State private var selectedNote: NoteFile?
+
     var body: some View {
-        ZStack {
-            Color.appBlack.edgesIgnoringSafeArea(.all)
-            
-            VStack {
-                Image("NotePad")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 250, height: 250)
-                
-                HStack(spacing: 0) {
-                    Text("Note").foregroundColor(Color.appBlue)
-                    Text(" Pad ").foregroundColor(Color.appGold)
+        AppScreen {
+            VStack(spacing: 24) {
+                Image("NotePad").resizable().aspectRatio(contentMode: .fit).frame(width: 190, height: 190).accessibilityHidden(true)
+                ScreenTitle(text: "Note Pad")
+                ThemedCard {
+                    PrimaryButton(title: "New Note", systemImage: "square.and.pencil") { showNewNote = true }
+                    NavigationLink { SavedNotesView(savedNotes: $savedNotes, onNoteSelected: { selectedNote = $0 }) } label: {
+                        Label("Load Note", systemImage: "folder").appFont(.h3).frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(AppButtonStyleProxy())
                 }
-                .font(.largeTitle)
-                
                 Spacer()
-                
-                Button(action: {
-                    self.showNewNote = true
-                }) {
-                    Label("New Note", systemImage: "square.and.pencil")
-                        .foregroundColor(Color.appBlue)
-                        .padding()
-                        .background(Color.appDarkBlue)
-                        .cornerRadius(15)
-                        .font(.title)
-                }
-                .padding()
-                .sheet(isPresented: $showNewNote, onDismiss: loadNotes) {
-                    NewNoteView(text: "", onSave: { newText in
-                        saveNoteText(newText)
-                    })
-                }
-                
-                NavigationLink(destination: SavedNotesView(savedNotes: Binding(
-                    get: { savedNotes.map { $0.name } },
-                    set: { newValue in
-                        savedNotes = newValue.map { IdentifiedNote(name: $0) }
-                    }
-                )) { selectedNote in
-                    self.selectedNote = selectedNote
-                    showSavedNotes = false // Dismiss the saved notes sheet
-                }, isActive: $showSavedNotes) {
-                    EmptyView()
-                }
-                .hidden()
-                
-                Button(action: {
-                    self.showSavedNotes = true
-                }) {
-                    Label("Load Note", systemImage: "folder")
-                        .foregroundColor(Color.appBlue)
-                        .padding()
-                        .background(Color.appDarkBlue)
-                        .cornerRadius(15)
-                        .font(.title)
-                }
-                .padding()
-                
-                Spacer()
-            }
+            }.padding(20)
         }
+        .navigationTitle("Note Pad")
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: loadNotes)
-        .sheet(item: $selectedNote) { noteName in
-            if let content = loadNoteContent(noteName) {
-                NewNoteView(text: content, onSave: { newText in
-                    saveNoteText(newText)
-                })
-            }
-        }
+        .sheet(isPresented: $showNewNote, onDismiss: loadNotes) { NewNoteView(text: "", onSave: saveNoteText) }
+        .sheet(item: $selectedNote, onDismiss: loadNotes) { note in NewNoteView(text: loadNoteContent(note.name) ?? "", onSave: saveNoteText) }
     }
-    
+
     private func loadNotes() {
         do {
-            let fileManager = FileManager.default
-            let documentsURL = try fileManager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-            let files = try fileManager.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: nil)
-            
-            savedNotes = files.filter { $0.pathExtension == "txt" }.map { IdentifiedNote(name: $0.lastPathComponent) }
-        } catch {
-            print("Failed to load notes: \(error)")
-        }
-    }
-    
-    private func loadNoteContent(_ noteName: String) -> String? {
-        do {
             let documentsURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-            let fileURL = documentsURL.appendingPathComponent(noteName)
-            return try String(contentsOf: fileURL, encoding: .utf8)
-        } catch {
-            print("Failed to load note content: \(error)")
-            return nil
-        }
+            savedNotes = try FileManager.default.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "txt" }
+                .map { NoteFile(name: $0.lastPathComponent) }
+                .sorted { $0.name > $1.name }
+        } catch { savedNotes = [] }
     }
-    
+
+    private func loadNoteContent(_ noteName: String) -> String? {
+        guard let documentsURL = try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return nil }
+        return try? String(contentsOf: documentsURL.appendingPathComponent(noteName), encoding: .utf8)
+    }
+
     private func saveNoteText(_ text: String) {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "dd MM yyyy HH:mm"
-        let fileName = "\(dateFormatter.string(from: Date())).txt"
-        
-        do {
-            let fileURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false).appendingPathComponent(fileName)
-            try text.write(to: fileURL, atomically: true, encoding: .utf8)
-        } catch {
-            print("Failed to save note: \(error)")
-        }
+        let dateFormatter = DateFormatter(); dateFormatter.dateFormat = "dd MM yyyy HH:mm"
+        guard let fileURL = try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false).appendingPathComponent("\(dateFormatter.string(from: Date())).txt") else { return }
+        try? text.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 }
 
+struct NoteFile: Identifiable, Hashable { let id: String; let name: String; init(name: String) { self.id = name; self.name = name } }
+
 struct NewNoteView: View {
-    @Environment(\.presentationMode) var presentationMode
+    @Environment(\.dismiss) private var dismiss
     @State var text: String
     let onSave: (String) -> Void
     @State private var showUnsavedAlert = false
-    
+
     var body: some View {
-        NavigationView {
-            VStack {
-                TextEditor(text: $text)
-                    .foregroundColor(Color.appBlack)
-                    .background(Color.appBlack)
-                    .padding()
-                
-                Button("Save") {
-                    onSave(text)
-                    presentationMode.wrappedValue.dismiss()
-                }
-                .padding()
-                .foregroundColor(Color.appWhite)
-                .background(Color.appDarkBlue)
-                .cornerRadius(10)
-                
-                Spacer()
+        NavigationStack {
+            AppScreen {
+                VStack(spacing: 16) {
+                    TextEditor(text: $text)
+                        .appFont(.paragraph)
+                        .foregroundStyle(AppTheme.text)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .background(AppTheme.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .accessibilityLabel("Note text")
+                    PrimaryButton(title: "Save", isDisabled: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { onSave(text); dismiss() }
+                }.padding(20)
             }
-            .navigationBarTitle("New Note", displayMode: .inline)
-            .navigationBarItems(trailing: Button("Cancel") {
-                if text.isEmpty {
-                    presentationMode.wrappedValue.dismiss()
-                } else {
-                    showUnsavedAlert = true
-                }
-            })
-            .alert(isPresented: $showUnsavedAlert) {
-                Alert(
-                    title: Text("Unsaved Changes"),
-                    message: Text("Would you like to save your changes?"),
-                    primaryButton: .destructive(Text("Dismiss")) {
-                        presentationMode.wrappedValue.dismiss()
-                    },
-                    secondaryButton: .default(Text("Save")) {
-                        onSave(text)
-                        presentationMode.wrappedValue.dismiss()
-                    })
-            }
+            .navigationTitle("Note")
+            .toolbar { Button("Cancel") { text.isEmpty ? dismiss() : (showUnsavedAlert = true) } }
+            .alert("Unsaved Changes", isPresented: $showUnsavedAlert) {
+                Button("Dismiss", role: .destructive) { dismiss() }
+                Button("Save") { onSave(text); dismiss() }
+            } message: { Text("Would you like to save your changes?") }
         }
     }
 }
 
 struct SavedNotesView: View {
-    @Environment(\.presentationMode) var presentationMode
-    @Binding var savedNotes: [String]
-    let onNoteSelected: (String) -> Void
-    
+    @Binding var savedNotes: [NoteFile]
+    let onNoteSelected: (NoteFile) -> Void
+
     var body: some View {
-        NavigationView {
+        AppScreen {
             List {
-                ForEach(savedNotes, id: \.self) { note in
-                    Button(action: {
-                        onNoteSelected(note)
-                        presentationMode.wrappedValue.dismiss() // Dismiss the saved notes sheet
-                    }) {
-                        Text(note)
-                    }
-                    .swipeActions {
-                        Button(role: .destructive) {
-                            delete(note: note)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
+                if savedNotes.isEmpty {
+                    Text("No saved notes yet.").appFont(.paragraph).foregroundStyle(AppTheme.text).listRowBackground(AppTheme.surface)
+                }
+                ForEach(savedNotes) { note in
+                    Button(note.name) { onNoteSelected(note) }
+                        .appFont(.paragraph)
+                        .foregroundStyle(AppTheme.text)
+                        .listRowBackground(AppTheme.surface)
+                        .swipeActions { Button(role: .destructive) { delete(note: note) } label: { Label("Delete", systemImage: "trash") } }
                 }
             }
-            .navigationBarTitle("Saved Notes", displayMode: .inline)
         }
+        .navigationTitle("Saved Notes")
+        .navigationBarTitleDisplayMode(.inline)
     }
-    
-    private func delete(note: String) {
-        do {
-            let fileManager = FileManager.default
-            let documentsURL = try fileManager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-            let fileURL = documentsURL.appendingPathComponent(note)
-            try fileManager.removeItem(at: fileURL)
-            
-            if let index = savedNotes.firstIndex(of: note) {
-                savedNotes.remove(at: index)
-            }
-        } catch {
-            print("Failed to delete note: \(error)")
-        }
+
+    private func delete(note: NoteFile) {
+        guard let documentsURL = try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return }
+        try? FileManager.default.removeItem(at: documentsURL.appendingPathComponent(note.name))
+        savedNotes.removeAll { $0.id == note.id }
     }
 }
 
-struct NotePad_Previews: PreviewProvider {
-    static var previews: some View {
-        NotePad()
+private struct AppButtonStyleProxy: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.foregroundStyle(AppTheme.text).padding(.horizontal,16).background(AppTheme.highlight.opacity(configuration.isPressed ? 0.72 : 1)).clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
-extension String: Identifiable {
-    public var id: String { self }
-}
+#Preview { NotePad() }

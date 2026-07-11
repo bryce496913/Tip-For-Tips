@@ -1,12 +1,3 @@
-//
-//  TipCalculator.swift
-//  Tips For Tips
-//
-//  Created by Aditi Abrol on 7/4/24.
-//
-
-// TODO: Fix the font size and placement in the UI
-
 import SwiftUI
 
 struct TipCalculator: View {
@@ -16,156 +7,69 @@ struct TipCalculator: View {
     @State private var isPercentageSelected = true
     @State private var isServicePickerPresented = false
 
-    // Array of service types
-    let services = [
-        "Restaurant with table service",
-        "Bars",
-        "Yellow Taxi",
-        "Uber/Lyft driver",
-        "Food delivery",
-        "Shuttle driver",
-        "Doorman",
-        "Porter",
-        "Housekeeping",
-        "Room Service",
-        "Tour Guides",
-        "Tour Bus Drivers",
-        "Spa",
-        "Hairdressers/Barbers",
-        "Nail Salon"
-    ]
+    private let services = ["Restaurant with table service", "Bars", "Yellow Taxi", "Uber/Lyft driver", "Food delivery", "Shuttle driver", "Doorman", "Porter", "Housekeeping", "Room Service", "Tour Guides", "Tour Bus Drivers", "Spa", "Hairdressers/Barbers", "Nail Salon"]
+    private let recommendedTips: [String: String] = ["Restaurant with table service": "15-20%", "Bars": "15-20% or $1-$2 per drink", "Yellow Taxi": "10-20%", "Uber/Lyft driver": "10-20%", "Food delivery": "15-20%", "Shuttle driver": "$2-$5 per person", "Doorman": "$1-$5", "Porter": "$1-$2 per bag", "Housekeeping": "$2-$5 per night", "Room Service": "15-20%", "Tour Guides": "$2-$5 per participating person for local tours. 15-20% of the ticket price for a day trip", "Tour Bus Drivers": "$2-$5 per person", "Spa": "15-20%", "Hairdressers/Barbers": "15-20%", "Nail Salon": "15-20%"]
 
-    // Dictionary to store recommended tip amounts
-    let recommendedTips: [String: String] = [
-        "Restaurant with table service": "15-20%",
-        "Bars": "15-20% or $1-$2 per drink",
-        "Yellow Taxi": "10-20%",
-        "Uber/Lyft driver": "10-20%",
-        "Food delivery": "15-20%",
-        "Shuttle driver": "$2-$5 per person",
-        "Doorman": "$1-$5",
-        "Porter": "$1-$2 per bag",
-        "Housekeeping": "$2-$5 per night",
-        "Room Service": "15-20%",
-        "Tour Guides": "$2-$5 per participating person for local tours. 15-20% of the ticket price for a day trip",
-        "Tour Bus Drivers": "$2-$5 per person",
-        "Spa": "15-20%",
-        "Hairdressers/Barbers": "15-20%",
-        "Nail Salon": "15-20%"
-    ]
-
-    var selectedService: String {
-        services[selectedServiceIndex]
-    }
-
-    var recommendedTip: String {
-        recommendedTips[selectedService] ?? ""
-    }
-
-    var tipAmountSummary: String {
-        let tipPercentage = Double(tipAmount) ?? 0
-        let billAmount = Double(totalBill) ?? 0
-
-        if isPercentageSelected {
-            let calculatedTip = (billAmount * tipPercentage) / 100
-            return String(format: "$%.2f", calculatedTip)
-        } else {
-            return "$" + tipAmount
-        }
-    }
-
-    var totalAmount: String {
-        let billAmount = Double(totalBill) ?? 0
-        let tip = Double(tipAmountSummary.dropFirst()) ?? 0
-        let total = billAmount + tip
-        return String(format: "$%.2f", total)
-    }
+    private var selectedService: String { services.indices.contains(selectedServiceIndex) ? services[selectedServiceIndex] : services[0] }
+    private var recommendedTip: String { recommendedTips[selectedService] ?? "" }
+    private var billValue: Double { max(Double(totalBill) ?? 0, 0) }
+    private var tipValue: Double { max(Double(tipAmount) ?? 0, 0) }
+    private var calculatedTip: Double { isPercentageSelected ? billValue * tipValue / 100 : tipValue }
+    private var totalAmount: Double { billValue + calculatedTip }
 
     var body: some View {
-        ZStack {
-            Color.black.edgesIgnoringSafeArea(.all)
-
-            VStack {
-                VStack {
+        AppScreen {
+            ScrollView {
+                VStack(spacing: 18) {
                     Image("TipCalculator")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 250, height: 250)
-                    
-                    HStack(spacing: 0) {
-                        Text("Tip ").foregroundColor(Color.appBlue)
-                        Text("Calculator").foregroundColor(Color.appGold)
+                        .frame(width: 190, height: 190)
+                        .accessibilityHidden(true)
+                    ScreenTitle(text: "Tip Calculator")
+
+                    ThemedCard {
+                        Text("Service") .appFont(.h2)
+                        SecondaryButton(title: selectedService) { isServicePickerPresented = true }
+                        Text("Recommended Tip: \(recommendedTip)")
+                            .appFont(.paragraph)
+                            .foregroundStyle(AppTheme.text)
                     }
-                    .font(.largeTitle)
-                }
-                Button(action: {
-                    isServicePickerPresented.toggle()
-                }) {
-                    Text("Select Service: \(services[selectedServiceIndex])")
-                        .foregroundColor(.white)
-                        .font(.title)
-                }
-                .padding()
 
-                Text("Recommended Tip: \(recommendedTip)")
-                    .foregroundColor(.white)
-                    .padding()
-                    .font(.body)
-
-                TextField("Bill Amount", text: $totalBill)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 15)
-                            .stroke(Color.appBlue, lineWidth: 5)
-                    )
-                    .padding(.horizontal, 50)
-                    .font(.title)
-                    .multilineTextAlignment(.center)
-                    .toolbar {
-                        ToolbarItem(placement: .keyboard) {
-                            Button("Done") {
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                            }
+                    ThemedCard {
+                        Text("Bill") .appFont(.h2)
+                        TextField("Bill Amount", text: $totalBill)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(AppTextFieldStyle())
+                            .multilineTextAlignment(.center)
+                            .accessibilityLabel("Bill amount")
+                        HStack {
+                            RadioButton(title: "Percent", isSelected: isPercentageSelected) { isPercentageSelected = true }
+                            RadioButton(title: "Dollars", isSelected: !isPercentageSelected) { isPercentageSelected = false }
                         }
+                        TextField(isPercentageSelected ? "Tip percent" : "Tip dollars", text: $tipAmount)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(AppTextFieldStyle())
+                            .multilineTextAlignment(.center)
                     }
-                    .padding()
 
-                HStack {
-                    RadioButton(title: "%", isSelected: isPercentageSelected) {
-                        isPercentageSelected = true
-                    }
-                    RadioButton(title: "$", isSelected: !isPercentageSelected) {
-                        isPercentageSelected = false
+                    ThemedCard {
+                        Text("Tip Amount: \(calculatedTip, format: .currency(code: "USD"))")
+                            .appFont(.h2)
+                            .foregroundStyle(AppTheme.highlight)
+                        Text("Bill Total: \(totalAmount, format: .currency(code: "USD"))")
+                            .appFont(.h2)
+                            .foregroundStyle(AppTheme.highlight)
                     }
                 }
-                .padding()
-
-                TextField(isPercentageSelected ? "Tip (%)" : "Tip ($)", text: $tipAmount)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 15)
-                            .stroke(Color.appGreen, lineWidth: 5)
-                    )
-                    .padding(.horizontal, 50)
-                    .font(.title)
-                    .multilineTextAlignment(.center)
-                    .padding()
-
-                Text("Tip Amount: \(tipAmountSummary)")
-                    .foregroundColor(.white)
-                    .padding()
-                    .font(.title)
-
-                Text("Bill Total: \(totalAmount)")
-                    .foregroundColor(.white)
-                    .padding()
-                    .font(.title)
-
-                Spacer()
+                .padding(20)
             }
         }
+        .navigationTitle("Tip Calculator")
+        .navigationBarTitleDisplayMode(.inline)
+        .hideKeyboardToolbar()
         .sheet(isPresented: $isServicePickerPresented) {
-            ServicePicker(selectedServiceIndex: $selectedServiceIndex, isPresented: $isServicePickerPresented, services: services)
+            ServicePicker(selectedServiceIndex: $selectedServiceIndex, services: services)
         }
     }
 }
@@ -177,49 +81,38 @@ struct RadioButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack {
-                Text(title)
-                    .foregroundColor(.white)
-                    .font(.title)
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.white)
-                } else {
-                    Image(systemName: "circle")
-                        .foregroundColor(.white)
-                }
-            }
+            Label(title, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
+                .appFont(.h3)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .foregroundStyle(isSelected ? AppTheme.text : AppTheme.accent)
         }
+        .background(isSelected ? AppTheme.accent : AppTheme.surface)
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(AppTheme.accent, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }
 }
 
 struct ServicePicker: View {
+    @Environment(\.dismiss) private var dismiss
     @Binding var selectedServiceIndex: Int
-    @Binding var isPresented: Bool // Added binding to control sheet presentation
     let services: [String]
 
     var body: some View {
-        VStack {
-            Picker(selection: $selectedServiceIndex, label: Text("Service")) {
-                ForEach(0..<services.count, id: \.self) { index in
-                    Text(self.services[index])
+        NavigationStack {
+            AppScreen {
+                Picker("Service", selection: $selectedServiceIndex) {
+                    ForEach(services.indices, id: \.self) { index in
+                        Text(services[index]).foregroundStyle(AppTheme.text)
+                    }
                 }
+                .pickerStyle(.wheel)
             }
-            .pickerStyle(WheelPickerStyle())
-            .labelsHidden()
-
-            Button("Done") {
-                isPresented = false // Dismiss the sheet
-            }
-            .padding()
+            .navigationTitle("Select Service")
+            .toolbar { Button("Done") { dismiss() } }
         }
-        .frame(height: UIScreen.main.bounds.height / 2)
-        .padding()
+        .presentationDetents([.medium])
     }
 }
 
-struct TipCalculator_Previews: PreviewProvider {
-    static var previews: some View {
-        TipCalculator()
-    }
-}
+#Preview { TipCalculator() }

@@ -1,123 +1,66 @@
-//  MainMenu.swift
-//  Tips For Tips
-//
-//  Created by Aditi Abrol on 7/4/24.
-
 import SwiftUI
 
 struct MainMenu: View {
-    private var columns: [GridItem] = [
-        GridItem(.flexible()),
-        GridItem(.flexible())
+    private let columns = [GridItem(.flexible()), GridItem(.flexible())]
+    private let menuItems: [MenuItem] = [
+        .init(title: "Tip Calculator", imageName: "TipCalculator", destination: AnyView(TipCalculator())),
+        .init(title: "Split Bill", imageName: "SplitBillCalculator", destination: AnyView(SplitBillCalculator())),
+        .init(title: "Currency Converter", imageName: "CurrencyConverter", destination: AnyView(CurrencyConverter())),
+        .init(title: "Receipts", imageName: "Receipts", destination: AnyView(Receipts())),
+        .init(title: "Note Pad", imageName: "NotePad", destination: AnyView(NotePad())),
+        .init(title: "Helpful Tips", imageName: "HelpfulTips", destination: AnyView(HelpfulTips()))
     ]
-    
+
     var body: some View {
-        NavigationView {
-            ZStack {
-                Color.appBlack.edgesIgnoringSafeArea(.all)
-                
-                VStack {
-                    Spacer()
-                    
-                    Image("MainLogo")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 250, height: 250)
-                    
-                    Spacer()
-                    
-                    HStack(spacing: 0) {
-                        Text("Tips").foregroundColor(Color.appBlue)
-                        Text(" for ").foregroundColor(Color.appGold)
-                        Text("Tips").foregroundColor(Color.appGreen)
-                    }
-                    .font(.largeTitle)
-                    
-                    Spacer()
-                    
-                    // Grid for menu buttons
-                    LazyVGrid(columns: columns, spacing: 20) {
-                        NavigationLink(destination: TipCalculator()) {
-                            VStack {
-                                Image("TipCalculator")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 100, height: 100)
-                                Text("Tip Calculator")
-                                    .foregroundColor(.white)
-                                    .font(.headline)
-                            }
-                        }
-                        NavigationLink(destination: SplitBillCalculator()) {
-                            VStack {
-                                Image("SplitBillCalculator")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 100, height: 100)
-                                Text("Split Bill")
-                                    .foregroundColor(.white)
-                                    .font(.headline)
-                            }
-                        }
-                        NavigationLink(destination: CurrencyConverter()) {
-                            VStack {
-                                Image("CurrencyConverter")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 100, height: 100)
-                                Text("Currency Converter")
-                                    .foregroundColor(.white)
-                                    .font(.headline)
-                            }
-                        }
-                        NavigationLink(destination: Receipts()) {
-                            VStack {
-                                Image("Receipts")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 100, height: 100)
-                                Text("Receipts")
-                                    .foregroundColor(.white)
-                                    .font(.headline)
-                            }
-                        }
-                        NavigationLink(destination: NotePad()) {
-                            VStack {
-                                Image("NotePad")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 100, height: 100)
-                                Text("Note Pad")
-                                    .foregroundColor(.white)
-                                    .font(.headline)
-                            }
-                        }
-                        NavigationLink(destination: HelpfulTips()) {
-                            VStack {
-                                Image("HelpfulTips")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 100, height: 100)
-                                Text("Helpful Tips")
-                                    .foregroundColor(.white)
-                                    .font(.headline)
+        NavigationStack {
+            AppScreen {
+                ScrollView {
+                    VStack(spacing: 24) {
+                        Image("MainLogo")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 220, height: 220)
+                            .accessibilityHidden(true)
+
+                        ScreenTitle(text: "Tips for Tips")
+
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(menuItems) { item in
+                                NavigationLink(destination: item.destination) {
+                                    ThemedCard {
+                                        VStack(spacing: 10) {
+                                            Image(item.imageName)
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 88, height: 88)
+                                                .accessibilityHidden(true)
+                                            Text(item.title)
+                                                .appFont(.h3)
+                                                .foregroundStyle(AppTheme.text)
+                                                .multilineTextAlignment(.center)
+                                        }
+                                        .frame(maxWidth: .infinity, minHeight: 132)
+                                    }
+                                }
+                                .accessibilityLabel(item.title)
                             }
                         }
                     }
-                    .padding()
-                    
-                    Spacer()
+                    .padding(20)
                 }
-                .foregroundColor(.white)
             }
-            .navigationBarTitle("") // Hide navigation bar title
-            .navigationBarHidden(true) // Hide navigation bar
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
 
-struct MainMenu_Previews: PreviewProvider {
-    static var previews: some View {
-        MainMenu()
-    }
+private struct MenuItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let imageName: String
+    let destination: AnyView
+}
+
+#Preview {
+    MainMenu()
 }

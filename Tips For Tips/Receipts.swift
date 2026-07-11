@@ -14,13 +14,12 @@ struct Receipts: View {
     @State private var showSavedReceipts = false
     @State private var savedReceipts: [Receipt] = []
     @State private var capturedImage: UIImage?
-    @State private var isRetake = false
     @State private var photoName: String = ""
-    @State private var showingNamePhotoView = false // Flag to control showing NamePhotoView
+    @State private var showingNamePhotoView = false
     
     var body: some View {
         ZStack {
-            Color.appBlack.edgesIgnoringSafeArea(.all)
+            AppTheme.background.ignoresSafeArea()
             
             VStack {
                 Image("Receipts")
@@ -29,9 +28,9 @@ struct Receipts: View {
                     .frame(width: 250, height: 250)
                 
                 HStack(spacing: 0) {
-                    Text("Receipts").foregroundColor(Color.appBlue)
+                    Text("Receipts").foregroundColor(AppTheme.accent)
                 }
-                .font(.largeTitle)
+                .appFont(.h1)
                 
                 Spacer()
                 
@@ -39,17 +38,16 @@ struct Receipts: View {
                     self.showPhotoCapture = true
                 }) {
                     Label("Take Photo", systemImage: "camera")
-                        .foregroundColor(Color.appBlue)
+                        .foregroundColor(AppTheme.text)
                         .padding()
-                        .background(Color.appDarkBlue)
+                        .background(AppTheme.accent)
                         .cornerRadius(15)
-                        .font(.title)
+                        .appFont(.h3)
                 }
                 .padding()
                 .sheet(isPresented: $showPhotoCapture) {
                     PhotoCaptureView(onPhotoCapture: { image in
                         capturedImage = image
-                        // Show NamePhotoView when photo is captured
                         showingNamePhotoView = true
                     })
                 }
@@ -58,20 +56,19 @@ struct Receipts: View {
                     self.showSavedReceipts = true
                 }) {
                     Label("Load Receipts", systemImage: "photo.on.rectangle")
-                        .foregroundColor(Color.appBlue)
+                        .foregroundColor(AppTheme.text)
                         .padding()
-                        .background(Color.appDarkBlue)
+                        .background(AppTheme.accent)
                         .cornerRadius(15)
-                        .font(.title)
+                        .appFont(.h3)
                 }
                 .padding()
                 .sheet(isPresented: $showSavedReceipts) {
-                    NavigationView {
+                    NavigationStack {
                         SavedReceiptsView(savedReceipts: $savedReceipts)
-                            .navigationBarItems(trailing: Button("Close") {
-                                showSavedReceipts = false
-                            })
-                            .navigationBarTitle("Saved Receipts", displayMode: .inline)
+                            .toolbar { Button("Close") { showSavedReceipts = false } }
+                            .navigationTitle("Saved Receipts")
+                            .navigationBarTitleDisplayMode(.inline)
                     }
                 }
                 
@@ -80,10 +77,11 @@ struct Receipts: View {
         }
         .sheet(isPresented: $showingNamePhotoView) {
             NamePhotoView(photoName: $photoName) {
-                // Dismiss the sheet and save the photo
-                let newReceipt = Receipt(imageData: capturedImage!.pngData()!, name: photoName)
-                savedReceipts.append(newReceipt)
-                saveReceiptsToStorage()
+                if let imageData = capturedImage?.pngData(), !photoName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let newReceipt = Receipt(imageData: imageData, name: photoName)
+                    savedReceipts.append(newReceipt)
+                    saveReceiptsToStorage()
+                }
                 self.showingNamePhotoView = false
                 self.capturedImage = nil
                 self.photoName = ""
@@ -97,28 +95,27 @@ struct Receipts: View {
     private func saveReceiptsToStorage() {
         do {
             let data = try JSONEncoder().encode(savedReceipts)
-            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
             let fileURL = documentsURL.appendingPathComponent("receipts.json")
             try data.write(to: fileURL)
         } catch {
-            print("Error saving receipts: \(error)")
+            return
         }
     }
     
     private func loadReceiptsFromStorage() {
         do {
-            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
             let fileURL = documentsURL.appendingPathComponent("receipts.json")
             let data = try Data(contentsOf: fileURL)
             savedReceipts = try JSONDecoder().decode([Receipt].self, from: data)
         } catch {
-            print("Error loading receipts: \(error)")
+            savedReceipts = []
         }
     }
 }
 
 struct PhotoCaptureView: View {
-    @Environment(\.presentationMode) var presentationMode
     var onPhotoCapture: (UIImage) -> Void
 
     @State private var orientation: UIImage.Orientation = .up
@@ -168,7 +165,7 @@ extension UIImage {
         newSize.height = floor(newSize.height)
 
         UIGraphicsBeginImageContextWithOptions(newSize, true, self.scale)
-        let context = UIGraphicsGetCurrentContext()!
+        guard let context = UIGraphicsGetCurrentContext() else { return self }
 
         // Move origin to middle
         context.translateBy(x: newSize.width / 2, y: newSize.height / 2)
@@ -177,10 +174,10 @@ extension UIImage {
         // Draw the rotated image
         self.draw(in: CGRect(x: -self.size.width / 2, y: -self.size.height / 2, width: self.size.width, height: self.size.height))
 
-        let newImage = UIGraphicsGetImageFromCurrentImageContext()!
+        let newImage = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
 
-        return newImage
+        return newImage ?? self
     }
 }
 
@@ -188,7 +185,7 @@ struct SavedReceiptsView: View {
     @Binding var savedReceipts: [Receipt]
 
     var body: some View {
-        NavigationView {
+        AppScreen {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))]) {
                     ForEach(savedReceipts.indices, id: \.self) { index in
@@ -201,27 +198,23 @@ struct SavedReceiptsView: View {
                                     .frame(height: 100)
                                     .cornerRadius(10)
                                 Text(receipt.name)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(AppTheme.text)
                                     .padding(.top, 5)
                             }
                         }
                     }
                 }
                 .padding()
+                if savedReceipts.isEmpty {
+                    Text("No saved receipts yet.")
+                        .appFont(.paragraph)
+                        .foregroundStyle(AppTheme.text)
+                        .padding()
+                }
             }
         }
     }
 
-    private func saveReceiptsToStorage() {
-        do {
-            let data = try JSONEncoder().encode(savedReceipts)
-            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            let fileURL = documentsURL.appendingPathComponent("receipts.json")
-            try data.write(to: fileURL)
-        } catch {
-            print("Error saving receipts: \(error)")
-        }
-    }
 }
 
 struct FullImageView: View {
@@ -231,7 +224,7 @@ struct FullImageView: View {
     @State private var lastScale: CGFloat = 1.2
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 Spacer()
                 Image(uiImage: image)
@@ -248,8 +241,8 @@ struct FullImageView: View {
                     )
                     .scaleEffect(scale)
                     .padding()
-                    .background(Color.black)
-                    .edgesIgnoringSafeArea(.all)
+                    .background(AppTheme.background)
+                    .ignoresSafeArea()
                 Spacer()
             }
         }
@@ -263,13 +256,13 @@ struct NamePhotoView: View {
     var body: some View {
         VStack {
             Text("Enter photo name")
-                .foregroundColor(Color.appWhite)
-                .font(.headline)
+                .foregroundColor(AppTheme.text)
+                .appFont(.h2)
             
             TextField("", text: $photoName)
                 .padding()
-                .background(Color.white)
-                .foregroundColor(Color.appBlack)
+                .background(AppTheme.text)
+                .foregroundColor(AppTheme.background)
                 .cornerRadius(10)
                 .padding()
             
@@ -279,22 +272,22 @@ struct NamePhotoView: View {
                     onSave()
                 }
                 .padding()
-                .background(Color.red)
-                .foregroundColor(.white)
+                .background(AppTheme.highlight)
+                .foregroundColor(AppTheme.text)
                 .cornerRadius(10)
                 
                 Button("Save") {
                     onSave()
                 }
                 .padding()
-                .background(Color.appGreen)
-                .foregroundColor(.white)
+                .background(AppTheme.highlight)
+                .foregroundColor(AppTheme.text)
                 .cornerRadius(10)
             }
             .padding()
         }
         .padding()
-        .background(Color.appBlack)
+        .background(AppTheme.background)
         .cornerRadius(20)
         .padding()
     }
@@ -317,7 +310,6 @@ struct CameraViewControllerRepresentable: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
-        // Not needed
     }
     
     func makeCoordinator() -> Coordinator {
@@ -346,6 +338,6 @@ struct Receipt: Codable, Identifiable {
     var name: String
     
     var image: UIImage {
-        UIImage(data: imageData)!
+        UIImage(data: imageData) ?? UIImage()
     }
 }

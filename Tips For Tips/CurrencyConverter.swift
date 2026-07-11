@@ -1,10 +1,3 @@
-//
-//  CurrencyConverter.swift
-//  Tips For Tips
-//
-//  Created by Aditi Abrol on 7/4/24.
-//
-
 import SwiftUI
 
 struct CurrencyConverter: View {
@@ -12,182 +5,109 @@ struct CurrencyConverter: View {
     @State private var amount = ""
     @State private var selectedCurrency = "USD"
     @State private var convertedAmount = ""
-    @State private var conversionRate = 1.0
     @State private var currencyList: [String] = []
     @State private var isShowingBaseCurrencySelection = false
     @State private var isShowingSelectedCurrencySelection = false
+    @State private var errorMessage: String?
 
-    //private let apiKey = "a875c3d6fa9b411b59a140a9"
     private let apiURL = "https://v6.exchangerate-api.com/v6/a875c3d6fa9b411b59a140a9/latest/"
+    private var amountValue: Double? { guard let value = Double(amount), value >= 0 else { return nil }; return value }
 
     var body: some View {
-        ZStack {
-            Color.appBlack.edgesIgnoringSafeArea(.all)
-            
-            VStack {
-                VStack {
+        AppScreen {
+            ScrollView {
+                VStack(spacing: 18) {
                     Image("CurrencyConverter")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 250, height: 250)
-                    
-                    HStack(spacing: 0) {
-                        Text("Currency ").foregroundColor(Color.appBlue)
-                        Text("Converter").foregroundColor(Color.appGold)
+                        .frame(width: 190, height: 190)
+                        .accessibilityHidden(true)
+                    ScreenTitle(text: "Currency Converter")
+                    ThemedCard {
+                        Text("Amount") .appFont(.h2)
+                        TextField("Enter Amount", text: $amount)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(AppTextFieldStyle())
+                            .multilineTextAlignment(.center)
                     }
-                    .font(.largeTitle)
-                }
-                
-                TextField("Enter Amount", text: $amount)
-                    .keyboardType(.decimalPad)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 15)
-                            .stroke(Color.appBlue, lineWidth: 5)
-                    )
-                    .padding(.horizontal, 50)
-                    .font(.title)
-                    .multilineTextAlignment(.center)
-                    .toolbar {
-                        ToolbarItem(placement: .keyboard) {
-                            Button("Done") {
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                            }
-                        }
+                    ThemedCard {
+                        SecondaryButton(title: "Starting Currency: \(baseCurrency)") { isShowingBaseCurrencySelection = true }
+                        SecondaryButton(title: "Convert To: \(selectedCurrency)") { isShowingSelectedCurrencySelection = true }
+                        PrimaryButton(title: "Convert", isDisabled: amountValue == nil || currencyList.isEmpty) { fetchConversionRate() }
                     }
-                
-                Spacer()
-                
-                Button(action: {
-                    isShowingBaseCurrencySelection = true
-                }) {
-                    Text("Starting Currency: \(baseCurrency)")
-                        .font(.title)
-                        .foregroundColor(Color.appBlue)
+                    ThemedCard {
+                        Text("\(amount) \(baseCurrency) = \(convertedAmount) \(selectedCurrency)")
+                            .appFont(.h2)
+                            .foregroundStyle(AppTheme.highlight)
+                        if let errorMessage { Text(errorMessage).appFont(.paragraph).foregroundStyle(AppTheme.highlight) }
+                    }
                 }
-                .padding()
-                .popover(isPresented: $isShowingBaseCurrencySelection, content: {
-                    baseCurrencyPicker()
-                })
-                
-                Button(action: {
-                    isShowingSelectedCurrencySelection = true
-                }) {
-                    Text("Convert To: \(selectedCurrency)")
-                        .font(.title)
-                        .foregroundColor(Color.appGold)
-                }
-                .padding()
-                .popover(isPresented: $isShowingSelectedCurrencySelection, content: {
-                    selectedCurrencyPicker()
-                })
-                
-                Spacer()
-                
-                Button("Convert") {
-                    fetchConversionRate()
-                }
-                .padding()
-                .background(Color.appDarkBlue)
-                .foregroundColor(.white)
-                .cornerRadius(15)
-                .font(.title)
-                
-                Spacer()
-                
-                Text("\(amount) \(baseCurrency) = \(convertedAmount) \(selectedCurrency)")
-                    .padding()
-                    .font(.title)
-                    .foregroundColor(Color.appGreen)
-            }
-            .onAppear {
-                fetchCurrencyList()
+                .padding(20)
             }
         }
-    }
-
-    private func baseCurrencyPicker() -> some View {
-        VStack {
-            Picker("Base Currency", selection: $baseCurrency) {
-                ForEach(currencyList, id: \.self) { currency in
-                    Text(currency)
-                }
-            }
-            .pickerStyle(WheelPickerStyle())
-            .labelsHidden()
-
-            Button("Done") {
-                isShowingBaseCurrencySelection = false
-            }
-            .padding()
-        }
-        .frame(height: UIScreen.main.bounds.height / 2)
-        .padding()
-    }
-
-    private func selectedCurrencyPicker() -> some View {
-        VStack {
-            Picker("Convert To", selection: $selectedCurrency) {
-                ForEach(currencyList, id: \.self) { currency in
-                    Text(currency)
-                }
-            }
-            .pickerStyle(WheelPickerStyle())
-            .labelsHidden()
-
-            Button("Done") {
-                isShowingSelectedCurrencySelection = false
-            }
-            .padding()
-        }
-        .frame(height: UIScreen.main.bounds.height / 2)
-        .padding()
+        .navigationTitle("Currency Converter")
+        .navigationBarTitleDisplayMode(.inline)
+        .hideKeyboardToolbar()
+        .task { fetchCurrencyList() }
+        .sheet(isPresented: $isShowingBaseCurrencySelection) { CurrencyPicker(title: "Starting Currency", selection: $baseCurrency, currencies: currencyList) { fetchCurrencyList() } }
+        .sheet(isPresented: $isShowingSelectedCurrencySelection) { CurrencyPicker(title: "Convert To", selection: $selectedCurrency, currencies: currencyList) }
     }
 
     private func fetchCurrencyList() {
         guard let url = URL(string: apiURL + baseCurrency) else { return }
-
-        URLSession.shared.dataTask(with: url) { data, response, error in
-            if let data = data {
-                do {
-                    let result = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
-                    if let conversionRates = result?["conversion_rates"] as? [String: Double] {
-                        currencyList = conversionRates.keys.sorted()
-                        selectedCurrency = currencyList.first ?? ""
-                    }
-                } catch {
-                    print("Failed to decode: \(error.localizedDescription)")
-                }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data,
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let conversionRates = result["conversion_rates"] as? [String: Double] else {
+                DispatchQueue.main.async { errorMessage = "Unable to load currencies." }
+                return
+            }
+            DispatchQueue.main.async {
+                currencyList = conversionRates.keys.sorted()
+                if !currencyList.contains(selectedCurrency) { selectedCurrency = currencyList.first ?? "USD" }
+                errorMessage = nil
             }
         }.resume()
     }
 
     private func fetchConversionRate() {
-        guard let url = URL(string: apiURL + baseCurrency) else { return }
-
-        URLSession.shared.dataTask(with: url) { data, response, error in
-            if let data = data {
-                do {
-                    let result = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
-                    if let conversionRates = result?["conversion_rates"] as? [String: Double] {
-                        if let rate = conversionRates[selectedCurrency] {
-                            conversionRate = rate
-                            if let amountValue = Double(amount) {
-                                let converted = amountValue * conversionRate
-                                convertedAmount = String(format: "%.2f", converted)
-                            }
-                        }
-                    }
-                } catch {
-                    print("Failed to decode: \(error.localizedDescription)")
-                }
+        guard let amountValue, let url = URL(string: apiURL + baseCurrency) else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data,
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let conversionRates = result["conversion_rates"] as? [String: Double],
+                  let rate = conversionRates[selectedCurrency] else {
+                DispatchQueue.main.async { errorMessage = "Unable to convert right now." }
+                return
+            }
+            DispatchQueue.main.async {
+                convertedAmount = String(format: "%.2f", amountValue * rate)
+                errorMessage = nil
             }
         }.resume()
     }
 }
 
-struct CurrencyConverter_Previews: PreviewProvider {
-    static var previews: some View {
-        CurrencyConverter()
+private struct CurrencyPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    @Binding var selection: String
+    let currencies: [String]
+    var onDone: (() -> Void)?
+
+    var body: some View {
+        NavigationStack {
+            AppScreen {
+                Picker(title, selection: $selection) {
+                    ForEach(currencies, id: \.self) { Text($0).foregroundStyle(AppTheme.text) }
+                }
+                .pickerStyle(.wheel)
+            }
+            .navigationTitle(title)
+            .toolbar { Button("Done") { onDone?(); dismiss() } }
+        }
+        .presentationDetents([.medium])
     }
 }
+
+#Preview { CurrencyConverter() }

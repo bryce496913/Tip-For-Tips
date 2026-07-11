@@ -18,7 +18,7 @@ class CurrencyConverterViewModel: ObservableObject {
 
     private var conversionRates: [String: Double] = [:]
     var currencyList: [String] {
-        Array(conversionRates.keys)
+        Array(conversionRates.keys).sorted()
     }
 
     init() {
@@ -30,7 +30,6 @@ class CurrencyConverterViewModel: ObservableObject {
 
         URLSession.shared.dataTask(with: url) { data, response, error in
             guard let data = data else {
-                print("No data in response: \(error?.localizedDescription ?? "Unknown error")")
                 return
             }
 
@@ -40,16 +39,18 @@ class CurrencyConverterViewModel: ObservableObject {
                     self.conversionRates = result.conversionRates
                 }
             } catch {
-                print("Error decoding JSON: \(error.localizedDescription)")
+                return
             }
         }.resume()
     }
 
     func convert() {
-        guard let amount = Double(amount) else { return }
-        let fromCurrency = currencyList[fromCurrencyIndex]
-        let toCurrency = currencyList[toCurrencyIndex]
+        let currencies = currencyList
+        guard let amount = Double(amount), amount >= 0,
+              currencies.indices.contains(fromCurrencyIndex),
+              currencies.indices.contains(toCurrencyIndex) else { return }
 
+        let toCurrency = currencies[toCurrencyIndex]
         guard let rate = conversionRates[toCurrency] else { return }
         let convertedAmount = amount * rate
         self.convertedAmount = "\(convertedAmount) \(toCurrency)"
