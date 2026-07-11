@@ -26,10 +26,13 @@ struct EvenSplitView: View {
                             PrimaryButton(title: "Split", isDisabled: !canSplit) { calculateSplit() }
                         }
                         ThemedCard {
-                            Text("Split Amount: \((splitAmount ?? 0), format: .currency(code: "USD"))")
+                            Text("Total with Tip: \(((validBill ?? 0) + (validTip ?? 0)), format: .currency(code: "USD"))")
                                 .appFont(.h2)
                                 .foregroundStyle(AppTheme.highlight)
-                                .accessibilityLabel("Split amount \((splitAmount ?? 0), format: .currency(code: "USD"))")
+                            Text("Amount per Person: \((splitAmount ?? 0), format: .currency(code: "USD"))")
+                                .appFont(.h2)
+                                .foregroundStyle(AppTheme.highlight)
+                                .accessibilityLabel("Amount per person \((splitAmount ?? 0), format: .currency(code: "USD"))")
                             if !canSplit {
                                 Text("Enter a non-negative bill, at least one person, and a non-negative tip amount.")
                                     .appFont(.paragraph)
@@ -51,7 +54,9 @@ struct EvenSplitView: View {
     }
 
     private func positiveDouble(_ value: String, allowZero: Bool) -> Double? {
-        guard let number = Double(value), number >= 0, allowZero || number > 0 else { return nil }
+        let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.locale = .current
+        let parsed = formatter.number(from: value)?.doubleValue ?? Double(value)
+        guard let number = parsed, number >= 0, allowZero || number > 0 else { return nil }
         return number
     }
 }
