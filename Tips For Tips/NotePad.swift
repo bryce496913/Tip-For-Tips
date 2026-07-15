@@ -42,7 +42,7 @@ actor NoteStore {
         do {
             let envelope = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL))
             return sort(envelope.records)
-        } catch { print("Note load failed: \(error)"); throw NoteStorageError.load }
+        } catch { throw NoteStorageError.load }
     }
 
     func upsert(_ note: SavedNote) throws -> [SavedNote] {
@@ -64,7 +64,7 @@ actor NoteStore {
             try fileManager.createDirectory(at: notesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try encoder.encode(StoredDataEnvelope(version: 1, records: sort(notes)))
             try data.write(to: notesURL, options: [.atomic])
-        } catch { print("Note save failed: \(error)"); throw NoteStorageError.save }
+        } catch { throw NoteStorageError.save }
     }
 
     private func sort(_ notes: [SavedNote]) -> [SavedNote] { notes.sorted { $0.updatedAt == $1.updatedAt ? $0.createdAt > $1.createdAt : $0.updatedAt > $1.updatedAt } }
@@ -92,7 +92,7 @@ actor NoteStore {
                 let destination = legacyURL.appendingPathComponent(file.lastPathComponent)
                 if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: file) } else { try fileManager.moveItem(at: file, to: destination) }
             }
-        } catch { print("Note migration failed: \(error)"); throw NoteStorageError.migration }
+        } catch { throw NoteStorageError.migration }
     }
 }
 

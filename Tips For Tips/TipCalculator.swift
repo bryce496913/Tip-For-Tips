@@ -9,22 +9,27 @@ struct TipCalculator: View {
     @State private var didCalculate = false
 
     private let services = TippingGuidance.services
-    private func decimalValue(_ text: String) -> Double? {
-        let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.locale = .current
-        if let n = formatter.number(from: text), n.doubleValue >= 0 { return n.doubleValue }
-        if let n = Double(text), n >= 0 { return n }
-        return nil
-    }
+    private func decimalValue(_ text: String) -> Decimal? { LocalizedDecimalParser.parse(text).flatMap { $0 >= 0 ? $0 : nil } }
 
     private func reset() { totalBill = ""; tipAmount = ""; tipInputMode = .percentage; selectedServiceIndex = 0; didCalculate = false }
 
     private var selectedService: TippingService { services.indices.contains(selectedServiceIndex) ? services[selectedServiceIndex] : services[0] }
     private var recommendedTip: String { selectedService.recommendationSummary }
-    private var billValue: Double { max(decimalValue(totalBill) ?? 0, 0) }
-    private var tipValue: Double { max(decimalValue(tipAmount) ?? 0, 0) }
+    private var billValue: Decimal { max(decimalValue(totalBill) ?? 0, 0) }
+    private var tipValue: Decimal { max(decimalValue(tipAmount) ?? 0, 0) }
     private var canCalculate: Bool { decimalValue(totalBill) != nil && decimalValue(tipAmount) != nil }
-    private var calculatedTip: Double { tipInputMode == .percentage ? billValue * tipValue / 100 : tipValue }
-    private var totalAmount: Double { billValue + calculatedTip }
+    private var calculatedResult: TipCalculationResult? {
+        var input = TipCalculationInput.defaults()
+        input.serviceID = selectedService.id
+        input.finalTotal = billValue
+        input.calculationBasis = .finalTotalAfterTax
+        input.serviceQuality = .good
+        guard tipInputMode == .percentage else { return nil }
+        let customService = TippingService(id: selectedService.id, name: selectedService.name, category: selectedService.category, recommendation: .percentage(minimum: tipValue, standard: tipValue, maximum: tipValue), explanation: selectedService.explanation, guideSectionID: selectedService.guideSectionID, symbolName: selectedService.symbolName)
+        return try? TipRecommendationEngine(services: [customService]).calculate(input: input)
+    }
+    private var calculatedTip: Decimal { tipInputMode == .percentage ? (calculatedResult?.suggestedAdditionalTip ?? 0) : tipValue }
+    private var totalAmount: Decimal { billValue + calculatedTip }
 
     var body: some View {
         AppScreen {
@@ -68,10 +73,10 @@ struct TipCalculator: View {
                     ThemedCard {
                         Text("Calculation Result").appFont(.h2)
                         if didCalculate {
-                            Text("Tip Amount: \(calculatedTip, format: .currency(code: "USD"))")
+                            Text("Tip Amount: \(formatMoney(calculatedTip, code: "USD"))")
                                 .appFont(.h2)
                                 .foregroundStyle(AppTheme.highlight)
-                            Text("Total Amount: \(totalAmount, format: .currency(code: "USD"))")
+                            Text("Total Amount: \(formatMoney(totalAmount, code: "USD"))")
                                 .appFont(.h2)
                                 .foregroundStyle(AppTheme.highlight)
                         } else {
