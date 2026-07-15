@@ -43,15 +43,15 @@ struct TipCalculator: View {
                     ScreenTitle(text: "Tip Calculator")
 
                     ThemedCard {
-                        Text("Service") .appFont(.h2)
+                        Text("Service") .appFont(.title2)
                         SecondaryButton(title: selectedService.name) { isServicePickerPresented = true }
                         Text("Recommended Tip: \(recommendedTip)")
-                            .appFont(.paragraph)
+                            .appFont(.body)
                             .foregroundStyle(AppTheme.text)
                     }
 
                     ThemedCard {
-                        Text("Bill") .appFont(.h2)
+                        Text("Bill") .appFont(.title2)
                         TextField("Bill Amount", text: $totalBill)
                             .keyboardType(.decimalPad)
                             .textFieldStyle(AppTextFieldStyle())
@@ -71,16 +71,16 @@ struct TipCalculator: View {
                     SecondaryButton(title: "Reset", systemImage: "arrow.counterclockwise") { reset() }
 
                     ThemedCard {
-                        Text("Calculation Result").appFont(.h2)
+                        Text("Calculation Result").appFont(.title2)
                         if didCalculate {
                             Text("Tip Amount: \(formatMoney(calculatedTip, code: "USD"))")
-                                .appFont(.h2)
+                                .appFont(.title2)
                                 .foregroundStyle(AppTheme.highlight)
                             Text("Total Amount: \(formatMoney(totalAmount, code: "USD"))")
-                                .appFont(.h2)
+                                .appFont(.title2)
                                 .foregroundStyle(AppTheme.highlight)
                         } else {
-                            Text("Enter a bill and tip, then tap Calculate.").appFont(.paragraph)
+                            Text("Enter a bill and tip, then tap Calculate.").appFont(.body)
                         }
                     }
                 }
@@ -108,7 +108,7 @@ struct RadioButton: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
-                .appFont(.h3)
+                .appFont(.headline)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .foregroundStyle(isSelected ? AppTheme.text : AppTheme.accent)
         }

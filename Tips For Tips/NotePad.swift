@@ -118,7 +118,7 @@ struct NotePad: View {
                 ScreenTitle(text: "Note Pad")
                 ThemedCard {
                     PrimaryButton(title: "New Note", systemImage: "square.and.pencil") { editorMode = .create }
-                    NavigationLink { SavedNotesView(viewModel: viewModel, onNoteSelected: { editorMode = .edit($0) }) } label: { Label("Saved Notes", systemImage: "folder").appFont(.h3).frame(maxWidth: .infinity, minHeight: 44) }
+                    NavigationLink { SavedNotesView(viewModel: viewModel, onNoteSelected: { editorMode = .edit($0) }) } label: { Label("Saved Notes", systemImage: "folder").appFont(.headline).frame(maxWidth: .infinity, minHeight: 44) }
                         .buttonStyle(.plain).padding(.horizontal, AppSpacing.section).frame(maxWidth: .infinity, minHeight: 44).background(AppTheme.surface).overlay(RoundedRectangle(cornerRadius: 14).stroke(AppTheme.accent, lineWidth: 1)).clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 Spacer()
@@ -147,7 +147,7 @@ struct NewNoteView: View {
 
     var body: some View {
         NavigationStack {
-            AppScreen { VStack(spacing: 16) { TextEditor(text: $text).appFont(.paragraph).foregroundStyle(AppTheme.text).scrollContentBackground(.hidden).padding(8).background(AppTheme.surface).clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityLabel("Note text"); PrimaryButton(title: "Save", isDisabled: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { onSave(text); dismiss() } }.padding(20) }
+            AppScreen { VStack(spacing: 16) { TextEditor(text: $text).appFont(.body).foregroundStyle(AppTheme.text).scrollContentBackground(.hidden).padding(8).background(AppTheme.surface).clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityLabel("Note text"); PrimaryButton(title: "Save", isDisabled: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { onSave(text); dismiss() } }.padding(20) }
             .navigationTitle(note == nil ? "New Note" : "Edit Note")
             .toolbar { Button("Cancel") { hasChanges ? (showUnsavedAlert = true) : dismiss() } }
             .alert("Unsaved Changes", isPresented: $showUnsavedAlert) { Button("Save") { onSave(text); dismiss() }; Button("Discard Changes", role: .destructive) { dismiss() }; Button("Keep Editing", role: .cancel) {} } message: { Text("Would you like to save your changes before closing?") }
@@ -161,7 +161,7 @@ struct SavedNotesView: View {
     @State private var notePendingDelete: SavedNote?
     var body: some View {
         AppScreen { List { if viewModel.notes.isEmpty { EmptyStateView(systemImage: "note.text", title: "No saved notes", message: "Create a note and it will appear here.").listRowBackground(AppTheme.background) }
-            ForEach(viewModel.notes) { note in Button { onNoteSelected(note) } label: { VStack(alignment: .leading) { Text(note.text.split(separator: "\n").first.map(String.init) ?? "Untitled Note").appFont(.paragraph); Text(note.updatedAt.formatted(date: .abbreviated, time: .shortened)).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.7)) } }.foregroundStyle(AppTheme.text).listRowBackground(AppTheme.surface).accessibilityLabel("Open note").swipeActions { Button(role: .destructive) { notePendingDelete = note } label: { Label("Delete note", systemImage: "trash") } } }
+            ForEach(viewModel.notes) { note in Button { onNoteSelected(note) } label: { VStack(alignment: .leading) { Text(note.text.split(separator: "\n").first.map(String.init) ?? "Untitled Note").appFont(.body); Text(note.updatedAt.formatted(date: .abbreviated, time: .shortened)).appFont(.body).foregroundStyle(AppTheme.tertiaryText) } }.foregroundStyle(AppTheme.text).listRowBackground(AppTheme.surface).accessibilityLabel("Open note").swipeActions { Button(role: .destructive) { notePendingDelete = note } label: { Label("Delete note", systemImage: "trash") } } }
         } }
         .navigationTitle("Saved Notes").navigationBarTitleDisplayMode(.inline)
         .alert("Delete Note?", isPresented: Binding(get: { notePendingDelete != nil }, set: { if !$0 { notePendingDelete = nil } })) { Button("Delete", role: .destructive) { if let notePendingDelete { viewModel.delete(notePendingDelete) }; notePendingDelete = nil }; Button("Cancel", role: .cancel) { notePendingDelete = nil } } message: { Text("This note will be removed from your saved notes.") }

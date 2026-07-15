@@ -90,7 +90,7 @@ struct EvenSplitView: View {
                         if let result {
                             resultCard(result)
                         } else {
-                            ThemedCard { Text(canSplit ? "Tap Split to calculate each person's share." : "Enter a bill amount, tip, and whole number of people.").appFont(.paragraph) }
+                            ThemedCard { Text(canSplit ? "Tap Split to calculate each person's share." : "Enter a bill amount, tip, and whole number of people.").appFont(.body) }
                         }
                     }
                     .padding(20)
@@ -108,12 +108,12 @@ struct EvenSplitView: View {
 
     private var tipModeSelector: some View {
         ThemedCard {
-            Text("Tip Type").appFont(.h2)
+            Text("Tip Type").appFont(.title2)
             HStack(spacing: AppSpacing.standard) {
                 ForEach(TipInputMode.allCases) { mode in
                     Button { tipInputMode = mode } label: {
                         Label(mode.shortTitle, systemImage: tipInputMode == mode ? "checkmark.circle.fill" : "circle")
-                            .appFont(.h3)
+                            .appFont(.headline)
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .foregroundStyle(tipInputMode == mode ? AppTheme.text : AppTheme.accent)
@@ -125,31 +125,31 @@ struct EvenSplitView: View {
                     .accessibilityHint("Sets whether the tip value is a percentage or a fixed dollar amount.")
                 }
             }
-            Text("Selected: \(tipInputMode.title)").appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.85))
+            Text("Selected: \(tipInputMode.title)").appFont(.body).foregroundStyle(AppTheme.text.opacity(0.85))
         }
     }
 
     private func labeledInput(title: String, text: Binding<String>, field: InputField, keyboard: UIKeyboardType, prefix: String? = nil, suffix: String? = nil, error: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: AppSpacing.small) {
-            Text(title).appFont(.h2)
+            Text(title).appFont(.title2)
             HStack {
-                if let prefix { Text(prefix).appFont(.h3).accessibilityHidden(true) }
+                if let prefix { Text(prefix).appFont(.headline).accessibilityHidden(true) }
                 TextField(title, text: text)
                     .keyboardType(keyboard)
                     .textFieldStyle(AppTextFieldStyle())
                     .multilineTextAlignment(.center)
                     .focused($focusedField, equals: field)
                     .accessibilityLabel(title)
-                if let suffix { Text(suffix).appFont(.h3).accessibilityHidden(true) }
+                if let suffix { Text(suffix).appFont(.headline).accessibilityHidden(true) }
             }
-            if let error { Text(error).appFont(.paragraph).foregroundStyle(AppTheme.highlight).accessibilityLabel("Error: \(error)") }
+            if let error { Text(error).appFont(.body).foregroundStyle(AppTheme.highlight).accessibilityLabel("Error: \(error)") }
         }
     }
 
     private func resultCard(_ result: EvenSplitResult) -> some View {
         ThemedCard {
-            Text("Each Person Pays").appFont(.h2)
-            Text(formatCurrency(result.amountPerPerson)).appFont(.h1).foregroundStyle(AppTheme.highlight).frame(maxWidth: .infinity, alignment: .center).accessibilityLabel("Each person pays \(formatCurrency(result.amountPerPerson))")
+            Text("Each Person Pays").appFont(.title2)
+            Text(formatCurrency(result.amountPerPerson)).appFont(.title).foregroundStyle(AppTheme.highlight).frame(maxWidth: .infinity, alignment: .center).accessibilityLabel("Each person pays \(formatCurrency(result.amountPerPerson))")
             Divider().overlay(AppTheme.accent.opacity(0.4))
             resultRow("Bill", formatCurrency(result.billAmount))
             resultRow("Tip", tipDescription(for: result))
@@ -160,7 +160,7 @@ struct EvenSplitView: View {
     }
 
     private func resultRow(_ label: String, _ value: String) -> some View {
-        HStack { Text(label).appFont(.paragraph); Spacer(); Text(value).appFont(.paragraph).foregroundStyle(AppTheme.text) }
+        HStack { Text(label).appFont(.body); Spacer(); Text(value).appFont(.body).foregroundStyle(AppTheme.text) }
     }
 
     private func inputChanged(_ field: InputField) {
