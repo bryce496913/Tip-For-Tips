@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EEAA00012BD7AAAA00123456 /* HelpfulTipsContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */; };
 		EE2C07272BD7F97E00F29EF6 /* EvenSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2C07262BD7F97E00F29EF6 /* EvenSplitView.swift */; };
 		EE2C07292BD7F99500F29EF6 /* CustomSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2C07282BD7F99500F29EF6 /* CustomSplitView.swift */; };
 		EE648D592BBF5D6B00170654 /* Tips_For_TipsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE648D582BBF5D6B00170654 /* Tips_For_TipsApp.swift */; };
@@ -26,6 +27,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpfulTipsContent.swift; sourceTree = "<group>"; };
 		EE2C07262BD7F97E00F29EF6 /* EvenSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvenSplitView.swift; sourceTree = "<group>"; };
 		EE2C07282BD7F99500F29EF6 /* CustomSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomSplitView.swift; sourceTree = "<group>"; };
 		EE648D552BBF5D6B00170654 /* Tips For Tips.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Tips For Tips.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -86,6 +88,7 @@
 				EE648D722BC2F34500170654 /* Receipts.swift */,
 				EE648D742BC2F35500170654 /* NotePad.swift */,
 				EE648D762BC2F36100170654 /* HelpfulTips.swift */,
+				EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */,
 				EE648D6A2BC2F24600170654 /* Color.swift */,
 				EE648D5A2BBF5D6B00170654 /* ContentView.swift */,
 				EE648D662BC2EEF800170654 /* LaunchScreen.swift */,
@@ -174,6 +177,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EE648D772BC2F36100170654 /* HelpfulTips.swift in Sources */,
+				EEAA00012BD7AAAA00123456 /* HelpfulTipsContent.swift in Sources */,
 				EE648D5B2BBF5D6B00170654 /* ContentView.swift in Sources */,
 				EE648D592BBF5D6B00170654 /* Tips_For_TipsApp.swift in Sources */,
 				EE648D672BC2EEF800170654 /* LaunchScreen.swift in Sources */,
