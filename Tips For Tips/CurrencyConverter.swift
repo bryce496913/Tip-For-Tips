@@ -109,13 +109,18 @@ private struct CurrencySelectionButton: View {
 private struct ResultCard: View {
     @ObservedObject var viewModel: CurrencyConverterViewModel
     let result: ConversionResult
+    private var rateDescription: String {
+        let prefix = result.isCached ? "Cached rate" : "Rate"
+        if let rateDate = result.rateDate { return "\(prefix) date: \(rateDate.formatted(date: .abbreviated, time: .omitted))" }
+        return "\(prefix) fetched: \(result.fetchedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
     var body: some View {
         ThemedCard {
             Text("Conversion Result").appFont(.h2)
             Text("\(viewModel.formattedCurrency(result.enteredAmount, code: result.from.code)) \(result.from.code)").appFont(.h3)
             Text("\(viewModel.formattedCurrency(result.convertedAmount, code: result.to.code)) \(result.to.code)").appFont(.h1).foregroundStyle(AppTheme.highlight)
             Text("1 \(result.from.code) = \(viewModel.formattedRate(result.rate)) \(result.to.code)").appFont(.paragraph)
-            Text("\(result.isCached ? "Cached" : "Last updated") \(result.timestamp.formatted(date: .abbreviated, time: .shortened))").appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.75))
+            Text(rateDescription).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.75))
         }
         .accessibilityElement(children: .combine)
     }

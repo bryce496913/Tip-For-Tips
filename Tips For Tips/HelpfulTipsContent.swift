@@ -48,18 +48,9 @@ enum HelpfulTipsContent {
     ]
     static let footerNote = "Tipping customs and wage rules can vary by location and business. When a bill is unclear, ask the business how its service charges and gratuities work."
 
-    static let quickGuide: [QuickTippingGuideEntry] = [
-        .init(id: 1, service: "Sit-down restaurant", recommendation: "15–20%", explanation: "18–20% is an easy default.", symbolName: "fork.knife"),
-        .init(id: 2, service: "Buffet", recommendation: "Around 10%", explanation: "Staff may still clear plates and help at the table.", symbolName: "tray"),
-        .init(id: 3, service: "Bartender", recommendation: "$1–$2 per drink", explanation: "Or 15–20% of the tab.", symbolName: "wineglass"),
-        .init(id: 4, service: "Food delivery", recommendation: "Around 10–15%", explanation: "Tip more for difficult deliveries.", symbolName: "takeoutbag.and.cup.and.straw"),
-        .init(id: 5, service: "Takeout", recommendation: "Usually optional", explanation: "Consider up to 10% for large or complicated orders.", symbolName: "bag"),
-        .init(id: 6, service: "Taxi", recommendation: "Around 15–20%", explanation: "A smaller flat amount may work for short rides.", symbolName: "car"),
-        .init(id: 7, service: "Hotel housekeeping", recommendation: "Around $2–$5", explanation: "Leave it each day.", symbolName: "bed.double"),
-        .init(id: 8, service: "Bellhop", recommendation: "Around $2 first bag", explanation: "Then $1 for each additional bag.", symbolName: "suitcase"),
-        .init(id: 9, service: "Valet", recommendation: "Around $2–$5", explanation: "Tip when your car is returned.", symbolName: "key"),
-        .init(id: 10, service: "Hair, beauty and spa services", recommendation: "Around 15–20%", explanation: "Ask how to split the tip when several people helped.", symbolName: "scissors")
-    ]
+    static let quickGuide: [QuickTippingGuideEntry] = TippingGuidance.services.enumerated().map { index, service in
+        QuickTippingGuideEntry(id: index + 1, service: service.name, recommendation: service.recommendation, explanation: service.explanation, symbolName: service.symbolName)
+    }
 
     static let faqs: [TippingFAQ] = [
         .init(id: 1, question: "Why is tipping so common in the United States?", answer: "Tipping has become part of how many American service industries operate. In some states, employers may count a portion of an employee’s tips toward minimum-wage requirements. Other states require employers to pay the full state minimum wage before tips.\n\nBecause the rules vary, you should not assume that every server is paid the same hourly wage. Tips remain an important part of the income of many restaurant, hospitality and personal-service workers.", bulletPoints: []),
