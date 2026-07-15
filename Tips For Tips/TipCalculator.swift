@@ -19,7 +19,7 @@ struct TipCalculator: View {
     private func reset() { totalBill = ""; tipAmount = ""; tipInputMode = .percentage; selectedServiceIndex = 0; didCalculate = false }
 
     private var selectedService: TippingService { services.indices.contains(selectedServiceIndex) ? services[selectedServiceIndex] : services[0] }
-    private var recommendedTip: String { selectedService.recommendation }
+    private var recommendedTip: String { selectedService.recommendationSummary }
     private var billValue: Double { max(decimalValue(totalBill) ?? 0, 0) }
     private var tipValue: Double { max(decimalValue(tipAmount) ?? 0, 0) }
     private var canCalculate: Bool { decimalValue(totalBill) != nil && decimalValue(tipAmount) != nil }

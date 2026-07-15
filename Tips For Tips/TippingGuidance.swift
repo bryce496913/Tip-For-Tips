@@ -1,38 +1,27 @@
 import Foundation
 
-enum TippingServiceCategory: String, CaseIterable, Identifiable {
-    case restaurants, delivery, transportation, hotel, personalCare, tours, other
-    var id: String { rawValue }
-}
-
-struct TippingService: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let recommendation: String
-    let explanation: String
-    let minimumPercentage: Decimal?
-    let maximumPercentage: Decimal?
-    let defaultPercentage: Decimal?
-    let fixedAmountGuidance: String?
-    let category: TippingServiceCategory
-    let symbolName: String
-}
-
 enum TippingGuidance {
     static let services: [TippingService] = [
-        .init(id: "restaurant", name: "Restaurant with table service", recommendation: "15–20%", explanation: "18–20% is an easy default for good table service.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: nil, category: .restaurants, symbolName: "fork.knife"),
-        .init(id: "bar", name: "Bars", recommendation: "$1–$2 per drink or 15–20%", explanation: "Use a flat amount per drink or percentage for a full tab.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: "$1–$2 per drink", category: .restaurants, symbolName: "wineglass"),
-        .init(id: "taxi", name: "Yellow Taxi", recommendation: "Around 15–20%.", explanation: "A smaller flat amount may work for short rides; tip more for luggage help.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: nil, category: .transportation, symbolName: "car"),
-        .init(id: "rideshare", name: "Uber/Lyft driver", recommendation: "Around 15–20%.", explanation: "Consider the distance, luggage, wait time and overall service.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: nil, category: .transportation, symbolName: "car.fill"),
-        .init(id: "food-delivery", name: "Food delivery", recommendation: "Around 10–15%, with more for difficult deliveries.", explanation: "Tip more for bad weather, stairs, distance, traffic, large orders or late-night service.", minimumPercentage: 10, maximumPercentage: 15, defaultPercentage: 15, fixedAmountGuidance: nil, category: .delivery, symbolName: "takeoutbag.and.cup.and.straw"),
-        .init(id: "shuttle", name: "Shuttle driver", recommendation: "$2–$5 per person", explanation: "Especially when the driver handles bags.", minimumPercentage: nil, maximumPercentage: nil, defaultPercentage: nil, fixedAmountGuidance: "$2–$5 per person", category: .transportation, symbolName: "bus"),
-        .init(id: "doorman", name: "Doorman", recommendation: "$1–$5", explanation: "Consider tipping when they carry bags, find transportation or provide extra help.", minimumPercentage: nil, maximumPercentage: nil, defaultPercentage: nil, fixedAmountGuidance: "$1–$5", category: .hotel, symbolName: "door.left.hand.open"),
-        .init(id: "porter", name: "Porter", recommendation: "Around $2 for the first bag and $1 for each additional bag.", explanation: "Use fixed-dollar guidance instead of a bill percentage.", minimumPercentage: nil, maximumPercentage: nil, defaultPercentage: nil, fixedAmountGuidance: "$2 first bag, $1 each additional bag", category: .hotel, symbolName: "suitcase"),
-        .init(id: "housekeeping", name: "Housekeeping", recommendation: "$2–$5 per night", explanation: "Leave it each day because staff may change.", minimumPercentage: nil, maximumPercentage: nil, defaultPercentage: nil, fixedAmountGuidance: "$2–$5 per night", category: .hotel, symbolName: "bed.double"),
-        .init(id: "room-service", name: "Room Service", recommendation: "15–20%", explanation: "Check whether a gratuity or service charge is already included.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: nil, category: .hotel, symbolName: "tray"),
-        .init(id: "tour-guides", name: "Tour Guides", recommendation: "$2–$5 per person locally; 15–20% for day trips", explanation: "Tour tipping varies by length, group size and whether the guide is independent.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: "$2–$5 per person for local tours", category: .tours, symbolName: "map"),
-        .init(id: "spa", name: "Spa", recommendation: "Around 15–20%", explanation: "Ask how to split the tip when several people helped.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: nil, category: .personalCare, symbolName: "sparkles"),
-        .init(id: "hair", name: "Hairdressers/Barbers", recommendation: "Around 15–20%", explanation: "Ask how to split the tip when several people helped.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: nil, category: .personalCare, symbolName: "scissors"),
-        .init(id: "nails", name: "Nail Salon", recommendation: "Around 15–20%", explanation: "Ask how to split the tip when several people helped.", minimumPercentage: 15, maximumPercentage: 20, defaultPercentage: 18, fixedAmountGuidance: nil, category: .personalCare, symbolName: "hand.raised")
+        .init(id: "restaurant", name: "Restaurant with table service", category: .restaurants, recommendation: .percentage(minimum: 18, standard: 20, maximum: 22), explanation: "For table service in the United States, 18–20% is a common range; exceptional service may be higher.", guideSectionID: "restaurants", symbolName: "fork.knife"),
+        .init(id: "bar", name: "Bars", category: .bars, recommendation: .percentage(minimum: 15, standard: 18, maximum: 20), explanation: "For a full bar tab, 15–20% is customary. For single drinks, a small fixed amount per drink may also be used.", guideSectionID: "bars", symbolName: "wineglass"),
+        .init(id: "coffee-counter", name: "Coffee shop counter", category: .coffeeShops, recommendation: .optional(suggestedPercentage: 10, explanation: "Counter-service tipping is often optional; consider a small tip for complex orders or extra help."), explanation: "Coffee shop counter tipping is usually optional, especially for simple orders.", guideSectionID: "coffee-shops", symbolName: "cup.and.saucer"),
+        .init(id: "taxi", name: "Yellow Taxi", category: .taxisAndRideshare, recommendation: .percentage(minimum: 15, standard: 18, maximum: 20), explanation: "Tip more when the driver helps with luggage or provides difficult service.", guideSectionID: "taxis-rideshare", symbolName: "car"),
+        .init(id: "rideshare", name: "Uber/Lyft driver", category: .taxisAndRideshare, recommendation: .percentage(minimum: 15, standard: 18, maximum: 20), explanation: "Consider distance, luggage, wait time and overall service.", guideSectionID: "taxis-rideshare", symbolName: "car.fill"),
+        .init(id: "food-delivery", name: "Food delivery", category: .foodDelivery, recommendation: .percentage(minimum: 10, standard: 15, maximum: 20), explanation: "Tip more for bad weather, stairs, distance, traffic, large orders or late-night service.", guideSectionID: "food-delivery", symbolName: "takeoutbag.and.cup.and.straw"),
+        .init(id: "shuttle", name: "Shuttle driver", category: .hotels, recommendation: .fixedAmount(minimum: 2, standard: 3, maximum: 5, unitDescription: "per person, especially with bags"), explanation: "Use fixed-dollar guidance rather than a bill percentage.", guideSectionID: "hotels", symbolName: "bus"),
+        .init(id: "doorman", name: "Doorman", category: .hotels, recommendation: .fixedAmount(minimum: 1, standard: 3, maximum: 5, unitDescription: "for extra help"), explanation: "Consider tipping when they carry bags, find transportation or provide extra help.", guideSectionID: "hotels", symbolName: "door.left.hand.open"),
+        .init(id: "bell-staff", name: "Bell staff", category: .bellStaff, recommendation: .fixedAmount(minimum: 2, standard: 3, maximum: 5, unitDescription: "per bag or service"), explanation: "Bell staff guidance is fixed-dollar because there may not be a bill percentage.", guideSectionID: "bell-staff", symbolName: "suitcase"),
+        .init(id: "housekeeping", name: "Housekeeping", category: .housekeeping, recommendation: .fixedAmount(minimum: 2, standard: 5, maximum: 10, unitDescription: "per night"), explanation: "Leave it each day because staff may change.", guideSectionID: "housekeeping", symbolName: "bed.double"),
+        .init(id: "room-service", name: "Room Service", category: .hotels, recommendation: .percentage(minimum: 15, standard: 18, maximum: 20), explanation: "Check whether a gratuity or service charge is already included before adding more.", guideSectionID: "hotels", symbolName: "tray"),
+        .init(id: "tour-guides", name: "Tour Guides", category: .tourGuides, recommendation: .fixedAmount(minimum: 5, standard: 10, maximum: 20, unitDescription: "per person for many tours; percentage may fit private day trips"), explanation: "Tour tipping varies by length, group size and whether the guide is independent.", guideSectionID: "tour-guides", symbolName: "map"),
+        .init(id: "spa", name: "Spa", category: .salonsAndSpas, recommendation: .percentage(minimum: 15, standard: 18, maximum: 20), explanation: "Ask how to split the tip when several people helped.", guideSectionID: "salons-spas", symbolName: "sparkles"),
+        .init(id: "hair", name: "Hairdressers/Barbers", category: .salonsAndSpas, recommendation: .percentage(minimum: 15, standard: 18, maximum: 20), explanation: "Ask how to split the tip when several people helped.", guideSectionID: "salons-spas", symbolName: "scissors"),
+        .init(id: "nails", name: "Nail Salon", category: .salonsAndSpas, recommendation: .percentage(minimum: 15, standard: 18, maximum: 20), explanation: "Ask how to split the tip when several people helped.", guideSectionID: "salons-spas", symbolName: "hand.raised"),
+        .init(id: "valet", name: "Valet parking", category: .valetParking, recommendation: .fixedAmount(minimum: 2, standard: 5, maximum: 10, unitDescription: "when the car is returned"), explanation: "Valet tipping is normally a fixed amount, not a percentage of parking cost.", guideSectionID: "valet", symbolName: "parkingsign.circle"),
+        .init(id: "coat-check", name: "Coat check", category: .coatChecks, recommendation: .fixedAmount(minimum: 1, standard: 2, maximum: 5, unitDescription: "per item"), explanation: "A small fixed tip is customary when a person handles coats or bags.", guideSectionID: "coat-check", symbolName: "coat"),
+        .init(id: "entertainment", name: "Entertainment venue service", category: .entertainmentVenues, recommendation: .optional(suggestedPercentage: 15, explanation: "Tip for direct table or drink service; concession-counter tipping may be optional."), explanation: "Expectations vary by venue and service model.", guideSectionID: "entertainment", symbolName: "ticket"),
+        .init(id: "service-charges", name: "Included gratuity or service charge", category: .includedGratuityAndServiceCharges, recommendation: .informational("Review the receipt before adding extra tip"), explanation: "Terms like gratuity, service charge and hospitality charge do not always mean the same thing or guarantee distribution to staff.", guideSectionID: "included-gratuity", symbolName: "exclamationmark.magnifyingglass")
     ]
+
+    static func service(id: String) -> TippingService? { services.first { $0.id == id } }
 }
