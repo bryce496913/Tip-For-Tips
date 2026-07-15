@@ -69,3 +69,28 @@ final class Phase5CoreTests: XCTestCase {
         XCTAssertTrue(summary.contains("Tips for Tips"))
     }
 }
+
+final class ReceiptToTipInputIntegrationTests: XCTestCase {
+    func testReceiptPrefillRetainsTaxCurrencyAndIncludedGratuity() {
+        let charge = DetectedReceiptCharge(label: "Automatic gratuity", amount: 18, percentage: 18, kind: .automaticGratuity, confidence: 0.9, userClassification: .includedGratuity)
+        let receipt = ReceiptRecord(id: UUID(), merchantName: "Dinner", receiptDate: Date(), currencyCode: "EUR", subtotal: 100, tax: 8, total: 126, detectedCharges: [charge], imageFilename: "receipt.jpg", thumbnailFilename: "receipt-thumb.jpg", notes: "", createdAt: Date(), updatedAt: Date())
+        let input = receipt.tipCalculationInput()
+        XCTAssertEqual(input.subtotal, 100)
+        XCTAssertEqual(input.tax, 8)
+        XCTAssertEqual(input.finalTotal, 126)
+        XCTAssertEqual(input.currencyCode, "EUR")
+        XCTAssertEqual(input.gratuityStatus, .yes)
+        XCTAssertEqual(input.includedGratuityAmount, 18)
+        XCTAssertEqual(input.includedGratuityPercentage, 18)
+        XCTAssertEqual(input.includedGratuityEntryMode, .amount)
+    }
+
+    func testReceiptServiceChargePrefillUsesUnsureNotIncludedGratuity() {
+        let charge = DetectedReceiptCharge(label: "Service charge", amount: 4, percentage: nil, kind: .serviceCharge, confidence: 0.7, userClassification: .serviceChargeUnsure)
+        let receipt = ReceiptRecord(id: UUID(), merchantName: nil, receiptDate: nil, subtotal: nil, tax: nil, total: 30, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(), updatedAt: Date())
+        let input = receipt.tipCalculationInput()
+        XCTAssertEqual(input.calculationBasis, .finalTotalAfterTax)
+        XCTAssertEqual(input.gratuityStatus, .unsure)
+        XCTAssertNil(input.includedGratuityAmount)
+    }
+}

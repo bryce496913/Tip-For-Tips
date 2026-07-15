@@ -521,3 +521,26 @@ struct StoredExchangeRate: Identifiable, Codable, Hashable { var sourceCode: Str
 
 struct GuideBookmark: Identifiable, Codable, Hashable { var id: String; var createdAt: Date }
 struct RecentGuideItem: Identifiable, Codable, Hashable { var id: String; var title: String; var viewedAt: Date }
+
+extension ReceiptRecord {
+    func tipCalculationInput(defaults preferences: UserPreferences = .defaults) -> TipCalculationInput {
+        var input = TipCalculationInput.defaults(preferences: preferences)
+        input.serviceID = "restaurant"
+        input.subtotal = subtotal
+        input.tax = tax
+        input.finalTotal = total
+        input.currencyCode = currencyCode
+        input.calculationBasis = subtotal == nil ? .finalTotalAfterTax : preferences.tipCalculationBasis
+        let included = detectedCharges.first { charge in
+            charge.userClassification == .includedGratuity || charge.kind == .includedGratuity || charge.kind == .automaticGratuity
+        }
+        let unsure = detectedCharges.contains { charge in
+            charge.userClassification == .serviceChargeUnsure || charge.userClassification == .otherOrUnclear || charge.kind == .serviceCharge || charge.kind == .hospitalityCharge || charge.kind == .administrativeFee
+        }
+        input.gratuityStatus = included != nil ? .yes : (unsure ? .unsure : .no)
+        input.includedGratuityAmount = included?.amount
+        input.includedGratuityPercentage = included?.percentage
+        input.includedGratuityEntryMode = included?.amount != nil ? .amount : (included?.percentage != nil ? .percentage : .unknown)
+        return input
+    }
+}

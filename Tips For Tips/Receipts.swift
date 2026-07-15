@@ -31,7 +31,7 @@ actor ReceiptStore {
 
     init(rootURL: URL? = nil, fileManager: FileManager = .default) { self.rootURL = rootURL ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]; self.fileManager = fileManager; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601; decoder.dateDecodingStrategy = .iso8601 }
 
-    func load() throws -> [ReceiptRecord] { try migrateLegacyIfNeeded(); guard fileManager.fileExists(atPath: metadataURL.path) else { return [] }; do { return try decoder.decode(StoredDataEnvelope<ReceiptRecord>.self, from: Data(contentsOf: metadataURL)).records.sorted { $0.updatedAt > $1.updatedAt } } catch { print("Receipt decode failed: \(error)"); throw ReceiptStorageError.metadataRead } }
+    func load() throws -> [ReceiptRecord] { try migrateLegacyIfNeeded(); guard fileManager.fileExists(atPath: metadataURL.path) else { return [] }; do { return try decoder.decode(StoredDataEnvelope<ReceiptRecord>.self, from: Data(contentsOf: metadataURL)).records.sorted { $0.updatedAt > $1.updatedAt } } catch { throw ReceiptStorageError.metadataRead } }
     func image(for record: ReceiptRecord, thumbnail: Bool = false) throws -> UIImage { guard let imageFilename = record.imageFilename else { throw ReceiptStorageError.imageLoad }; let name = thumbnail ? (record.thumbnailFilename ?? imageFilename) : imageFilename; let url = (thumbnail ? thumbsDir : imagesDir).appendingPathComponent(name); guard let image = UIImage(contentsOfFile: url.path) else { throw ReceiptStorageError.imageLoad }; return image }
 
     func save(image: UIImage, name: String) throws -> [ReceiptRecord] {
@@ -71,7 +71,7 @@ actor ReceiptStore {
             for item in legacy { guard let image = UIImage(data: item.imageData), let full = image.normalizedForReceipt().resizedForReceipt(maxDimension: 1800).jpegData(compressionQuality: 0.82), let thumb = image.normalizedForReceipt().resizedForReceipt(maxDimension: 420).jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }; let id = item.id ?? UUID(); let imageName = "\(id.uuidString).jpg"; let thumbName = "\(id.uuidString)-thumb.jpg"; try full.write(to: imagesDir.appendingPathComponent(imageName), options: [.atomic]); try thumb.write(to: thumbsDir.appendingPathComponent(thumbName), options: [.atomic]); let now = Date(); records.append(ReceiptRecord(id: id, merchantName: item.name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: imageName, thumbnailFilename: thumbName, notes: "", createdAt: now, updatedAt: now)) }
             try saveMetadata(records)
             try fileManager.moveItem(at: legacyMetadataURL, to: rootURL.appendingPathComponent("receipts.json.legacy"))
-        } catch { print("Receipt migration failed: \(error)"); throw ReceiptStorageError.metadataRead }
+        } catch { throw ReceiptStorageError.metadataRead }
     }
 }
 
