@@ -35,8 +35,8 @@ struct HelpfulTips: View {
                     travelerTipsSection
                     finalReminderSection
                     Text(HelpfulTipsContent.footerNote)
-                        .appFont(.paragraph)
-                        .foregroundStyle(AppTheme.text.opacity(0.75))
+                        .appFont(.body)
+                        .foregroundStyle(AppTheme.secondaryText)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -50,7 +50,7 @@ struct HelpfulTips: View {
     private var introductionSection: some View {
         AccordionSection(title: HelpfulTipsContent.introductionTitle, isExpanded: binding(for: .introduction)) {
             ForEach(HelpfulTipsContent.introductionParagraphs, id: \.self) { paragraph in
-                Text(paragraph).appFont(.paragraph).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+                Text(paragraph).appFont(.body).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -60,12 +60,12 @@ struct HelpfulTips: View {
             HStack(spacing: AppSpacing.small) {
                 Image(systemName: "magnifyingglass").foregroundStyle(AppTheme.accent).accessibilityHidden(true)
                 TextField("Search questions, answers, and tips", text: $searchText)
-                    .appFont(.paragraph)
+                    .appFont(.body)
                     .textInputAutocapitalization(.never)
                     .accessibilityLabel("Search FAQs and tips")
                 if isSearching {
                     Button("Clear") { searchText = "" }
-                        .appFont(.h3)
+                        .appFont(.headline)
                         .foregroundStyle(AppTheme.highlight)
                         .accessibilityLabel("Clear search")
                 }
@@ -80,7 +80,7 @@ struct HelpfulTips: View {
     private var quickGuideSection: some View {
         AccordionSection(title: "Quick Tipping Guide", isExpanded: binding(for: .quickGuide)) {
             ForEach(HelpfulTipsContent.quickGuide) { entry in QuickGuideRow(entry: entry) }
-            Text(HelpfulTipsContent.quickGuideFooter).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+            Text(HelpfulTipsContent.quickGuideFooter).appFont(.body).foregroundStyle(AppTheme.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -110,14 +110,14 @@ struct HelpfulTips: View {
         ThemedCard {
             HStack(spacing: AppSpacing.small) {
                 Image(systemName: "heart.circle.fill").accessibilityHidden(true)
-                Text("Final Reminder").appFont(.h2).multilineTextAlignment(.leading)
+                Text("Final Reminder").appFont(.title2).multilineTextAlignment(.leading)
                 Spacer(minLength: AppSpacing.small)
             }
             .foregroundStyle(AppTheme.highlight)
             .accessibilityAddTraits(.isHeader)
 
             ForEach(HelpfulTipsContent.finalReminderParagraphs, id: \.self) { paragraph in
-                Text(paragraph).appFont(.paragraph).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+                Text(paragraph).appFont(.body).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -170,7 +170,7 @@ private struct AccordionSection<Content: View>: View {
                     if let systemImage {
                         Image(systemName: systemImage).accessibilityHidden(true)
                     }
-                    Text(title).appFont(.h2).multilineTextAlignment(.leading)
+                    Text(title).appFont(.title2).multilineTextAlignment(.leading)
                     Spacer(minLength: AppSpacing.small)
                     Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle")
                         .accessibilityHidden(true)
@@ -197,9 +197,9 @@ private struct QuickGuideRow: View {
             HStack(alignment: .top, spacing: AppSpacing.standard) {
                 Image(systemName: entry.symbolName).font(.headline).foregroundStyle(AppTheme.accent).frame(width: 28).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: AppSpacing.small) {
-                    Text(entry.service).appFont(.h3)
-                    Text(entry.recommendation).appFont(.h2).foregroundStyle(AppTheme.highlight)
-                    Text(entry.explanation).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+                    Text(entry.service).appFont(.headline)
+                    Text(entry.recommendation).appFont(.title2).foregroundStyle(AppTheme.highlight)
+                    Text(entry.explanation).appFont(.body).foregroundStyle(AppTheme.text.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -215,9 +215,9 @@ private struct FAQRow: View {
         Button(action: toggle) {
             VStack(alignment: .leading, spacing: AppSpacing.standard) {
                 HStack(alignment: .top) {
-                    Text("\(faq.id). \(faq.question)").appFont(.h3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                    Text("\(faq.id). \(faq.question)").appFont(.headline).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: AppSpacing.small)
-                    Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle").foregroundStyle(isExpanded ? AppTheme.accent : AppTheme.text.opacity(0.8)).accessibilityHidden(true)
+                    Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle").foregroundStyle(isExpanded ? AppTheme.accent : AppTheme.secondaryText).accessibilityHidden(true)
                 }
                 if isExpanded {
                     FAQAnswer(faq: faq)
@@ -258,7 +258,7 @@ private struct AnswerParagraphs: View {
     init(_ paragraphs: [String]) { self.paragraphs = paragraphs.filter { !$0.isEmpty } }
     var body: some View {
         ForEach(paragraphs, id: \.self) { paragraph in
-            Text(paragraph).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.9)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+            Text(paragraph).appFont(.body).foregroundStyle(AppTheme.text.opacity(0.9)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -270,8 +270,8 @@ private struct BulletList: View {
             VStack(alignment: .leading, spacing: AppSpacing.small) {
                 ForEach(items, id: \.self) { item in
                     HStack(alignment: .top, spacing: AppSpacing.small) {
-                        Text("•").appFont(.paragraph).foregroundStyle(AppTheme.highlight)
-                        Text(item).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.9)).fixedSize(horizontal: false, vertical: true)
+                        Text("•").appFont(.body).foregroundStyle(AppTheme.highlight)
+                        Text(item).appFont(.body).foregroundStyle(AppTheme.text.opacity(0.9)).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -302,7 +302,7 @@ private struct CategoryChip: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
-                .appFont(.h3)
+                .appFont(.headline)
                 .padding(.horizontal, AppSpacing.section)
                 .frame(minHeight: 44)
         }
@@ -318,9 +318,9 @@ private struct TipCard: View {
     let tip: TippingTip
     var body: some View {
         ThemedCard {
-            Text(tip.category.rawValue).appFont(.paragraph).foregroundStyle(AppTheme.accent)
-            Text("Tip \(tip.id): \(tip.title)").appFont(.h3).fixedSize(horizontal: false, vertical: true)
-            Text(tip.explanation).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.86)).fixedSize(horizontal: false, vertical: true)
+            Text(tip.category.rawValue).appFont(.body).foregroundStyle(AppTheme.accent)
+            Text("Tip \(tip.id): \(tip.title)").appFont(.headline).fixedSize(horizontal: false, vertical: true)
+            Text(tip.explanation).appFont(.body).foregroundStyle(AppTheme.text.opacity(0.86)).fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Tip \(tip.id), \(tip.title), category \(tip.category.rawValue). \(tip.explanation)")
@@ -332,8 +332,8 @@ private struct EmptySearchCard: View {
     let clearAction: () -> Void
     var body: some View {
         ThemedCard {
-            Text("No matching \(kind)s found.").appFont(.h3)
-            Text("Try another search term or clear the search and category filters.").appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.8))
+            Text("No matching \(kind)s found.").appFont(.headline)
+            Text("Try another search term or clear the search and category filters.").appFont(.body).foregroundStyle(AppTheme.secondaryText)
             SecondaryButton(title: "Clear Filters", systemImage: "xmark.circle", action: clearAction)
         }
     }
