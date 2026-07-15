@@ -8,6 +8,21 @@ enum AppTheme {
     static let text = Color.white
 }
 
+enum TipInputMode: String, CaseIterable, Identifiable {
+    case percentage
+    case fixedAmount
+
+    var id: String { rawValue }
+
+    var shortTitle: String {
+        switch self { case .percentage: return "%"; case .fixedAmount: return "$" }
+    }
+
+    var title: String {
+        switch self { case .percentage: return "Percentage"; case .fixedAmount: return "Fixed Amount" }
+    }
+}
+
 enum AppSpacing {
     static let small: CGFloat = 6
     static let standard: CGFloat = 10
