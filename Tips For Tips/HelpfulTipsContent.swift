@@ -49,7 +49,7 @@ enum HelpfulTipsContent {
     static let footerNote = "Tipping customs and wage rules can vary by location and business. When a bill is unclear, ask the business how its service charges and gratuities work."
 
     static let quickGuide: [QuickTippingGuideEntry] = TippingGuidance.services.enumerated().map { index, service in
-        QuickTippingGuideEntry(id: index + 1, service: service.name, recommendation: service.recommendation, explanation: service.explanation, symbolName: service.symbolName)
+        QuickTippingGuideEntry(id: index + 1, service: service.name, recommendation: service.recommendationSummary, explanation: service.explanation, symbolName: service.symbolName)
     }
 
     static let faqs: [TippingFAQ] = [
