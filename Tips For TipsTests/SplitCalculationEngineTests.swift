@@ -51,3 +51,34 @@ final class SplitCalculationEngineTests: XCTestCase {
         SplitSession(id: UUID(), name: "Test", mode: mode, currencyCode: "USD", subtotal: subtotal, tax: tax, tipAmount: tip, total: total, participants: participants, items: items, taxAllocationMode: .proportional, tipAllocationMode: .proportional, roundingRule: rounding, sourceCalculationID: nil, receiptID: nil, createdAt: Date(), updatedAt: Date())
     }
 }
+
+final class RoundedSplitReleaseTests: XCTestCase {
+    private let engine = SplitCalculationEngine()
+
+    func testTenFiftyExactCentsNearestDollarAndRoundUp() throws {
+        let exact = try engine.calculate(session: session(total: Decimal(string: "10.50")!, people: 2, rounding: .exactCents))
+        XCTAssertEqual(exact.participantResults.map(\.finalAmount), [Decimal(string: "5.25")!, Decimal(string: "5.25")!])
+        XCTAssertEqual(exact.roundedCollectedTotal, Decimal(string: "10.50")!)
+        XCTAssertEqual(exact.roundingDifference, 0)
+
+        let nearest = try engine.calculate(session: session(total: Decimal(string: "10.50")!, people: 2, rounding: .nearestDollar))
+        XCTAssertEqual(nearest.participantResults.map(\.finalAmount), [5, 5])
+        XCTAssertEqual(nearest.roundedCollectedTotal, 10)
+        XCTAssertEqual(nearest.roundingDifference, Decimal(string: "-0.50")!)
+
+        let roundUp = try engine.calculate(session: session(total: Decimal(string: "10.50")!, people: 2, rounding: .roundUpToDollar))
+        XCTAssertEqual(roundUp.participantResults.map(\.finalAmount), [6, 6])
+        XCTAssertEqual(roundUp.roundedCollectedTotal, 12)
+        XCTAssertEqual(roundUp.roundingDifference, Decimal(string: "1.50")!)
+    }
+
+    func testRoundedSplitPositiveNegativeAndZeroDifferences() throws {
+        XCTAssertEqual(try engine.calculate(session: session(total: Decimal(string: "10.50")!, people: 3, rounding: .nearestDollar)).roundingDifference, Decimal(string: "1.50")!)
+        XCTAssertEqual(try engine.calculate(session: session(total: Decimal(string: "10.50")!, people: 2, rounding: .nearestDollar)).roundingDifference, Decimal(string: "-0.50")!)
+        XCTAssertEqual(try engine.calculate(session: session(total: 10, people: 2, rounding: .nearestDollar)).roundingDifference, 0)
+    }
+
+    private func session(total: Decimal, people count: Int, rounding: SplitRoundingRule) -> SplitSession {
+        SplitSession(id: UUID(), name: "Rounded", mode: .equal, currencyCode: "USD", subtotal: total, tax: 0, tipAmount: 0, total: total, participants: (1...count).map { SplitParticipant(name: "Person \($0)") }, items: [], taxAllocationMode: .proportional, tipAllocationMode: .proportional, roundingRule: rounding, sourceCalculationID: nil, receiptID: nil, createdAt: Date(), updatedAt: Date())
+    }
+}

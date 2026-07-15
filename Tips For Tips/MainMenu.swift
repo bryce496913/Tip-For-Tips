@@ -4,7 +4,7 @@ enum AppRoute: Hashable {
     case guidedTipAssistant(TipCalculationInput? = nil, linkedReceiptID: UUID? = nil)
     case receiptScanner(ReceiptScannerContext = .newReceipt)
     case splitCalculator(SplitCalculatorContext = .manual)
-    case currencyConverter
+    case currencyConverter(CurrencyConversionContext? = nil)
     case history
     case tippingGuide
     case settings
@@ -90,7 +90,7 @@ struct MainMenu: View {
             .navigationDestination(for: AppRoute.self) { route in destination(for: route) }
         }
         .task {
-            migrationReport = await migrationCoordinator.migrateIfNeeded()
+            let report = await migrationCoordinator.migrateIfNeeded(); migrationReport = (report.migratedNotesCount > 0 || report.migratedReceiptsCount > 0 || !report.partialFailures.isEmpty) ? report : nil
             if let loaded = try? await preferencesRepository.loadPreferences() { preferences = loaded }
         }
     }
@@ -101,7 +101,7 @@ struct MainMenu: View {
         case let .receiptScanner(context): ReceiptScannerView(context: context)
         case .legacyReceipts: Receipts()
         case let .splitCalculator(context): SplitBillCalculator(context: context)
-        case .currencyConverter: CurrencyConverter()
+        case let .currencyConverter(context): CurrencyConverter(context: context)
         case .history: HistoryView()
         case .tippingGuide: HelpfulTips()
         case .settings: SettingsView(preferences: preferences)
@@ -118,7 +118,7 @@ struct DashboardQuickActions: View {
     private let actions: [(String, String, AppRoute)] = [
         ("Scan Receipt", "doc.text.viewfinder", .receiptScanner()),
         ("Split a Bill", "person.2", .splitCalculator()),
-        ("Convert Currency", "arrow.left.arrow.right", .currencyConverter),
+        ("Convert Currency", "arrow.left.arrow.right",  .currencyConverter()),
         ("What Should I Tip?", "book", .tippingGuide)
     ]
     private let columns = [GridItem(.flexible()), GridItem(.flexible())]
@@ -198,7 +198,14 @@ final class GuidedTipAssistantViewModel: ObservableObject {
     var shareSummary: String { guard let result else { return "" }; return "Tip for \(result.service.name): \(formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode)); final total \(formatMoney(result.finalTotal, code: result.input.currencyCode))." }
     func guideRoute() -> AppRoute { .guideSection(selectedService?.guideSectionID ?? input.serviceID) }
     func splitRoute() -> AppRoute { guard let result else { return .splitCalculator() }; return .splitCalculator(.tipResult(result)) }
-    func convertRoute() -> AppRoute { .currencyConverter }
+    func convertRoute() -> AppRoute {
+        guard let result else { return .currencyConverter() }
+        return .currencyConverter(CurrencyConversionContext(sourceCurrencyCode: result.input.currencyCode, values: [
+            ConvertibleAmount(id: "bill", label: "Bill", amount: result.baseBillAmount),
+            ConvertibleAmount(id: "tip", label: "Tip", amount: result.suggestedAdditionalTip),
+            ConvertibleAmount(id: "total", label: "Final total", amount: result.finalTotal)
+        ], sourceRecordID: result.id))
+    }
 
     private func invalidate() { result = nil; validationMessage = nil }
     private func validate(step: GuidedTipStep) -> String? {
@@ -283,10 +290,10 @@ struct CalculationDetailView: View {
     @State private var record: SavedCalculationRecord?
     @State private var error: String?
     private let repository = FileCalculationRepository()
-    var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { if let record, let tip = record.tipResult { ResultSummary(result: tip); ThemedCard { Text("Saved Details").appFont(.title2); ResultSummaryRow(label: "Service", value: tip.service.name); ResultSummaryRow(label: "Basis", value: tip.input.calculationBasis.title); ResultSummaryRow(label: "Currency", value: tip.input.currencyCode); ResultSummaryRow(label: "Date", value: record.createdAt.formatted(date: .abbreviated, time: .shortened)); if !record.notes.isEmpty { Text(record.notes).appFont(.body) }; NavigationLink("Split this bill", value: AppRoute.splitCalculator(.tipResult(tip, sourceCalculationID: record.id))); NavigationLink("Convert", value: AppRoute.currencyConverter); NavigationLink("Open related guidance", value: AppRoute.guideSection(tip.service.guideSectionID ?? tip.service.id)); ShareLink(item: ShareSummaryBuilder().tipSummary(tip)) { Text("Share") } } } else if let record, let split = record.splitResult { SplitDetailSummary(result: split); ShareLink(item: ShareSummaryBuilder().splitSummary(split)) { Text("Share Split") } } else { EmptyStateView(systemImage: "exclamationmark.triangle", title: "Related record no longer available", message: error ?? "This saved calculation could not be found.") } }.padding(AppSpacing.screen) } }.navigationTitle("History Detail").task { await load() } }
+    var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { if let record, let tip = record.tipResult { ResultSummary(result: tip); ThemedCard { Text("Saved Details").appFont(.title2); ResultSummaryRow(label: "Service", value: tip.service.name); ResultSummaryRow(label: "Basis", value: tip.input.calculationBasis.title); ResultSummaryRow(label: "Currency", value: tip.input.currencyCode); ResultSummaryRow(label: "Date", value: record.createdAt.formatted(date: .abbreviated, time: .shortened)); if !record.notes.isEmpty { Text(record.notes).appFont(.body) }; NavigationLink("Split this bill", value: AppRoute.splitCalculator(.tipResult(tip, sourceCalculationID: record.id))); NavigationLink("Convert", value: AppRoute.currencyConverter(CurrencyConversionContext(sourceCurrencyCode: tip.input.currencyCode, values: [ConvertibleAmount(id: "bill", label: "Bill", amount: tip.baseBillAmount), ConvertibleAmount(id: "tip", label: "Tip", amount: tip.suggestedAdditionalTip), ConvertibleAmount(id: "total", label: "Final total", amount: tip.finalTotal)], sourceRecordID: record.id))); NavigationLink("Open related guidance", value: AppRoute.guideSection(tip.service.guideSectionID ?? tip.service.id)); ShareLink(item: ShareSummaryBuilder().tipSummary(tip)) { Text("Share") } } } else if let record, let split = record.splitResult { SplitDetailSummary(result: split); ShareLink(item: ShareSummaryBuilder().splitSummary(split)) { Text("Share Split") } } else { EmptyStateView(systemImage: "exclamationmark.triangle", title: "Related record no longer available", message: error ?? "This saved calculation could not be found.") } }.padding(AppSpacing.screen) } }.navigationTitle("History Detail").task { await load() } }
     private func load() async { do { record = try await repository.fetchCalculations().first { $0.id == calculationID } } catch { self.error = "Saved calculation could not be loaded." } }
 }
-struct ReceiptDetailView: View { let receiptID: UUID; @State private var receipt: ReceiptRecord?; private let repository = FileReceiptRepository(); var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { if let receipt { ThemedCard { Text(receipt.displayName).appFont(.title2); ResultSummaryRow(label: "Currency", value: receipt.currencyCode); if let subtotal = receipt.subtotal { ResultSummaryRow(label: "Subtotal", value: formatMoney(subtotal, code: receipt.currencyCode)) }; if let tax = receipt.tax { ResultSummaryRow(label: "Tax", value: formatMoney(tax, code: receipt.currencyCode)) }; if let total = receipt.total { ResultSummaryRow(label: "Total", value: formatMoney(total, code: receipt.currencyCode)) }; Text(receipt.notes.isEmpty ? "No notes" : receipt.notes).appFont(.body); Text("Receipt images may contain merchant information, payment details, order numbers and personal notes. Share the image only when you choose to include it.").appFont(.body).foregroundStyle(AppTheme.secondaryText); ShareLink(item: ShareSummaryBuilder().receiptSummary(receipt)) { Text("Share summary only") }; NavigationLink("Calculate tip", value: AppRoute.guidedTipAssistant(receipt.tipCalculationInput(), linkedReceiptID: receipt.id)); NavigationLink("Split bill", value: AppRoute.splitCalculator(.receipt(receipt))); NavigationLink("Convert", value: AppRoute.currencyConverter) } } else { EmptyStateView(systemImage: "doc.text.magnifyingglass", title: "Related record no longer available", message: "This receipt could not be found.") } }.padding(AppSpacing.screen) } }.navigationTitle("Receipt").task { receipt = try? await repository.fetchReceipts().first { $0.id == receiptID } } } }
+struct ReceiptDetailView: View { let receiptID: UUID; @State private var receipt: ReceiptRecord?; private let repository = FileReceiptRepository(); var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { if let receipt { ThemedCard { Text(receipt.displayName).appFont(.title2); ResultSummaryRow(label: "Currency", value: receipt.currencyCode); if let subtotal = receipt.subtotal { ResultSummaryRow(label: "Subtotal", value: formatMoney(subtotal, code: receipt.currencyCode)) }; if let tax = receipt.tax { ResultSummaryRow(label: "Tax", value: formatMoney(tax, code: receipt.currencyCode)) }; if let total = receipt.total { ResultSummaryRow(label: "Total", value: formatMoney(total, code: receipt.currencyCode)) }; Text(receipt.notes.isEmpty ? "No notes" : receipt.notes).appFont(.body); Text("Receipt images may contain merchant information, payment details, order numbers and personal notes. Share the image only when you choose to include it.").appFont(.body).foregroundStyle(AppTheme.secondaryText); ShareLink(item: ShareSummaryBuilder().receiptSummary(receipt)) { Text("Share summary only") }; NavigationLink("Calculate tip", value: AppRoute.guidedTipAssistant(receipt.tipCalculationInput(), linkedReceiptID: receipt.id)); NavigationLink("Split bill", value: AppRoute.splitCalculator(.receipt(receipt))); NavigationLink("Convert", value: AppRoute.currencyConverter(CurrencyConversionContext(sourceCurrencyCode: receipt.currencyCode, values: receipt.convertibleAmounts, sourceRecordID: receipt.id))) } } else { EmptyStateView(systemImage: "doc.text.magnifyingglass", title: "Related record no longer available", message: "This receipt could not be found.") } }.padding(AppSpacing.screen) } }.navigationTitle("Receipt").task { receipt = try? await repository.receipt(id: receiptID) } } }
 struct SplitDetailSummary: View { let result: SplitCalculationResult; var body: some View { ThemedCard { Text(result.session.name).appFont(.title2); ResultSummaryRow(label: "Original total", value: formatMoney(result.originalTotal, code: result.session.currencyCode)); ResultSummaryRow(label: "Rounded total", value: formatMoney(result.roundedCollectedTotal, code: result.session.currencyCode)); ResultSummaryRow(label: "Difference", value: formatMoney(result.roundingDifference, code: result.session.currencyCode)); ForEach(result.participantResults) { p in ResultSummaryRow(label: p.participantName + (p.isPaid ? " (paid)" : " (unpaid)"), value: formatMoney(p.finalAmount, code: result.session.currencyCode)) } } } }
 
 struct SettingsView: View { let preferences: UserPreferences; var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { ScreenTitle(text: "Settings", subtitle: "Review app defaults, privacy, and local data controls."); ThemedCard { Text("Defaults").appFont(.title2); ResultSummaryRow(label: "Home currency", value: preferences.homeCurrencyCode); ResultSummaryRow(label: "Default tip", value: "\(preferences.defaultTipPercentage)%"); ResultSummaryRow(label: "Tip basis", value: preferences.tipCalculationBasis.title); ResultSummaryRow(label: "Default people", value: "\(preferences.defaultPeopleCount)"); ResultSummaryRow(label: "Show explanations", value: preferences.showTippingExplanations ? "On" : "Off") }; ThemedCard { Text("Privacy and local data").appFont(.title2); Text("Saved calculations, receipts, notes, and preferences are stored locally on this device. Receipt text recognition uses on-device Apple Vision when scanning is available.").appFont(.body); NavigationLink("Export data", value: AppRoute.history); NavigationLink("Delete saved activity", value: AppRoute.history) }; ThemedCard { Text("About").appFont(.title2); ResultSummaryRow(label: "App", value: "Tips for Tips"); ResultSummaryRow(label: "Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1") } }.padding(AppSpacing.screen) } }.navigationTitle("Settings") } }
