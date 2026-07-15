@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HelpfulTips: View {
-    @State private var expandedSectionIDs: Set<HelpfulTipsSection> = Set(HelpfulTipsSection.allCases)
+    @State private var expandedSectionIDs: Set<HelpfulTipsSection> = []
     @State private var expandedFAQIDs: Set<Int> = []
     @State private var selectedTipCategory: TippingTipCategory? = nil
     @State private var searchText = ""
@@ -100,7 +100,15 @@ struct HelpfulTips: View {
     }
 
     private var finalReminderSection: some View {
-        AccordionSection(title: "Final Reminder", systemImage: "heart.circle.fill", isExpanded: binding(for: .finalReminder)) {
+        ThemedCard {
+            HStack(spacing: AppSpacing.small) {
+                Image(systemName: "heart.circle.fill").accessibilityHidden(true)
+                Text("Final Reminder").appFont(.h2).multilineTextAlignment(.leading)
+                Spacer(minLength: AppSpacing.small)
+            }
+            .foregroundStyle(AppTheme.highlight)
+            .accessibilityAddTraits(.isHeader)
+
             ForEach(HelpfulTipsContent.finalReminderParagraphs, id: \.self) { paragraph in
                 Text(paragraph).appFont(.paragraph).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
             }
@@ -127,7 +135,6 @@ private enum HelpfulTipsSection: CaseIterable, Hashable {
     case quickGuide
     case faq
     case travelerTips
-    case finalReminder
 }
 
 private struct AccordionSection<Content: View>: View {
