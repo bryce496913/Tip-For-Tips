@@ -25,6 +25,25 @@ enum GratuityStatus: String, Codable, CaseIterable, Identifiable, Hashable {
     var id: String { rawValue }
 }
 
+enum IncludedGratuityEntryMode: String, Codable, CaseIterable, Identifiable, Hashable {
+    case percentage, amount, unknown
+    var id: String { rawValue }
+}
+
+enum BartenderTipMode: String, Codable, CaseIterable, Identifiable, Hashable {
+    case percentageOfTab, perDrink
+    var id: String { rawValue }
+}
+
+struct FoodDeliveryDifficulty: OptionSet, Codable, Hashable {
+    let rawValue: Int
+    static let badWeather = FoodDeliveryDifficulty(rawValue: 1 << 0)
+    static let longDistance = FoodDeliveryDifficulty(rawValue: 1 << 1)
+    static let difficultEntrance = FoodDeliveryDifficulty(rawValue: 1 << 2)
+    static let largeOrder = FoodDeliveryDifficulty(rawValue: 1 << 3)
+    static let lateNight = FoodDeliveryDifficulty(rawValue: 1 << 4)
+}
+
 enum RoundingPreference: String, Codable, CaseIterable, Identifiable, Hashable {
     case exactCents
     case roundEachPaymentUpToDollar
@@ -122,8 +141,20 @@ struct TipCalculationInput: Codable, Hashable {
     var serviceQuality: ServiceQuality
     var gratuityStatus: GratuityStatus
     var includedGratuityAmount: Decimal?
+    var includedGratuityPercentage: Decimal?
+    var includedGratuityEntryMode: IncludedGratuityEntryMode
+    var finalTotalIncludesIncludedGratuity: Bool
     var peopleCount: Int
     var currencyCode: String
+    var bartenderTipMode: BartenderTipMode
+    var numberOfDrinks: Int?
+    var numberOfBags: Int?
+    var numberOfHousekeepingDays: Int?
+    var foodDeliveryDifficulty: FoodDeliveryDifficulty
+
+    static func defaults(preferences: UserPreferences = .defaults) -> TipCalculationInput {
+        TipCalculationInput(serviceID: "restaurant", subtotal: nil, tax: nil, finalTotal: nil, calculationBasis: preferences.tipCalculationBasis, serviceQuality: .standard, gratuityStatus: .no, includedGratuityAmount: nil, includedGratuityPercentage: nil, includedGratuityEntryMode: .unknown, finalTotalIncludesIncludedGratuity: true, peopleCount: max(1, preferences.defaultPeopleCount), currencyCode: preferences.homeCurrencyCode, bartenderTipMode: .percentageOfTab, numberOfDrinks: nil, numberOfBags: nil, numberOfHousekeepingDays: nil, foodDeliveryDifficulty: [])
+    }
 }
 
 struct TipAlternative: Identifiable, Codable, Hashable {
@@ -140,6 +171,12 @@ struct TipCalculationResult: Identifiable, Codable, Hashable {
     let input: TipCalculationInput
     let recommendedPercentage: Decimal?
     let normalRange: DecimalRange?
+    let service: TippingService
+    let baseBillAmount: Decimal
+    let customaryGuidance: String
+    let includedGratuityAmount: Decimal
+    let suggestedAdditionalTip: Decimal
+    let combinedGratuity: Decimal
     let recommendedTipAmount: Decimal
     let finalTotal: Decimal
     let lowerAlternative: TipAlternative?
