@@ -176,3 +176,14 @@ actor V2MigrationCoordinator {
         return 0
     }
 }
+
+actor FileCalculationRepository: CalculationRepository {
+    private let store: CodableFileStore<SavedCalculationRecord>
+    init(rootURL: URL? = nil) {
+        let root = rootURL ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        store = CodableFileStore(fileURL: root.appendingPathComponent("V2/Calculations/calculations.json"))
+    }
+    func fetchCalculations() async throws -> [SavedCalculationRecord] { try await store.load(version: V2MigrationCoordinator.currentVersion) }
+    func saveCalculation(_ record: SavedCalculationRecord) async throws { var records = try await fetchCalculations(); records.removeAll { $0.id == record.id }; records.insert(record, at: 0); try await store.save(records, version: V2MigrationCoordinator.currentVersion) }
+    func deleteCalculation(id: UUID) async throws { var records = try await fetchCalculations(); records.removeAll { $0.id == id }; try await store.save(records, version: V2MigrationCoordinator.currentVersion) }
+}
