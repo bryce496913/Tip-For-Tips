@@ -28,3 +28,44 @@ final class TipRecommendationEngineTests: XCTestCase {
     func testInvalidPeopleAndNegativeBill() { XCTAssertThrowsError(try engine.calculate(input: input(people: 0))); var i = input(); i.subtotal = -1; XCTAssertThrowsError(try engine.calculate(input: i)) }
     func testLocalizedDecimalParsingAndAlternatives() { XCTAssertEqual(LocalizedDecimalParser.parse("12,50", locale: Locale(identifier: "fr_FR")), Decimal(string: "12.50")); XCTAssertNotNil(try engine.calculate(input: input()).lowerAlternative); XCTAssertNil(try engine.calculate(input: input(service: "valet")).recommendedPercentage) }
 }
+
+final class Phase5CoreTests: XCTestCase {
+    private let engine = TipRecommendationEngine()
+    private func tipRecord(date: Date = Date(timeIntervalSince1970: 100), merchant: String = "Joe's Pizza") throws -> SavedCalculationRecord {
+        var input = TipCalculationInput.defaults(); input.subtotal = 100; input.tax = 8; input.finalTotal = 108; input.serviceID = "restaurant"
+        let result = try engine.calculate(input: input)
+        return SavedCalculationRecord(id: UUID(), recordType: .tipOnly, tipResult: result, splitResult: nil, receiptID: nil, merchantName: merchant, notes: "window table", currencyConversion: nil, shareSummary: nil, createdAt: date, updatedAt: date)
+    }
+    private func receipt(date: Date = Date(timeIntervalSince1970: 200), merchant: String = "Cafe Élan") -> ReceiptRecord {
+        ReceiptRecord(id: UUID(), merchantName: merchant, receiptDate: date, currencyCode: "USD", subtotal: 40, tax: 4, total: 44, detectedCharges: [], imageFilename: "image.jpg", thumbnailFilename: "thumb.jpg", notes: "latte", createdAt: date, updatedAt: date)
+    }
+    private func splitRecord(date: Date = Date(timeIntervalSince1970: 300)) throws -> SavedCalculationRecord {
+        let session = SplitSession(id: UUID(), name: "Dinner Split", mode: .equal, currencyCode: "USD", subtotal: 90, tax: 9, tipAmount: 18, total: 117, participants: [SplitParticipant(name: "Alex", isPaid: true), SplitParticipant(name: "Sam")], items: [], taxAllocationMode: .equal, tipAllocationMode: .equal, roundingRule: .exactCents, sourceCalculationID: nil, receiptID: nil, createdAt: date, updatedAt: date)
+        let result = try SplitCalculationEngine().calculate(session: session)
+        return SavedCalculationRecord(id: session.id, recordType: .split, tipResult: nil, splitResult: result, receiptID: nil, merchantName: nil, notes: "birthday", currencyConversion: nil, shareSummary: nil, createdAt: date, updatedAt: date)
+    }
+    func testHistoryCombinesAndSortsNewestFirst() throws {
+        let entries = HistoryCombiner().combine(calculations: [try tipRecord(), try splitRecord()], receipts: [receipt()])
+        XCTAssertEqual(entries.count, 3)
+        XCTAssertEqual(HistoryViewState(entries: entries).filteredAndSorted.first?.recordType, .split)
+    }
+    func testHistorySearchTypeCurrencyAndAmountSorting() throws {
+        let entries = HistoryCombiner().combine(calculations: [try tipRecord(), try splitRecord()], receipts: [receipt()])
+        XCTAssertEqual(HistoryViewState(entries: entries, query: "elan").filteredAndSorted.first?.recordType, .receipt)
+        XCTAssertEqual(HistoryViewState(entries: entries, query: "alex").filteredAndSorted.first?.recordType, .split)
+        XCTAssertEqual(HistoryViewState(entries: entries, filter: HistoryFilter(recordType: .tipCalculation)).filteredAndSorted.count, 1)
+        XCTAssertEqual(HistoryViewState(entries: entries, filter: HistoryFilter(currencyCode: "USD")).filteredAndSorted.count, 3)
+        XCTAssertEqual(HistoryViewState(entries: entries, sort: .highestTotal).filteredAndSorted.first?.recordType, .split)
+        XCTAssertEqual(HistoryViewState(entries: entries, sort: .title).filteredAndSorted.first?.title, "Cafe Élan")
+    }
+    func testGuideDeepLinksResolveForEveryService() {
+        let validSectionIDs: Set<String> = ["restaurants", "bars", "coffee-shops", "taxis-rideshare", "food-delivery", "hotels", "bell-staff", "housekeeping", "tour-guides", "salons-spas", "valet", "coat-check", "entertainment", "other-counter", "included-gratuity"]
+        XCTAssertTrue(TippingGuidance.services.allSatisfy { service in service.guideSectionID.map(validSectionIDs.contains) == true })
+    }
+    func testShareSummariesDoNotExposeIdentifiers() throws {
+        let tip = try XCTUnwrap(try tipRecord().tipResult)
+        let summary = ShareSummaryBuilder().tipSummary(tip)
+        XCTAssertFalse(summary.contains(tip.id.uuidString))
+        XCTAssertTrue(summary.contains("Tips for Tips"))
+    }
+}

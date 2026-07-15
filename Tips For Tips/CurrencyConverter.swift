@@ -40,6 +40,8 @@ struct CurrencyConverter: View {
 
                     feedbackView
 
+                    if !viewModel.recentPairs.isEmpty { RecentCurrencyPairsView(viewModel: viewModel) }
+
                     if let result = viewModel.result {
                         ResultCard(viewModel: viewModel, result: result)
                             .accessibilityFocused($resultFocused)
@@ -56,7 +58,9 @@ struct CurrencyConverter: View {
             CurrencySelectionSheet(
                 title: kind == .source ? "Source Currency" : "Destination Currency",
                 currencies: viewModel.currencies,
-                selection: kind == .source ? $viewModel.sourceCurrency : $viewModel.destinationCurrency
+                selection: kind == .source ? $viewModel.sourceCurrency : $viewModel.destinationCurrency,
+                isFavorite: { viewModel.isFavorite($0) },
+                toggleFavorite: { viewModel.toggleFavorite($0) }
             )
         }
     }
@@ -120,17 +124,23 @@ private struct ResultCard: View {
             Text("\(viewModel.formattedCurrency(result.enteredAmount, code: result.from.code)) \(result.from.code)").appFont(.h3)
             Text("\(viewModel.formattedCurrency(result.convertedAmount, code: result.to.code)) \(result.to.code)").appFont(.h1).foregroundStyle(AppTheme.highlight)
             Text("1 \(result.from.code) = \(viewModel.formattedRate(result.rate)) \(result.to.code)").appFont(.paragraph)
+            if viewModel.multiValueLines.count > 1 { ForEach(viewModel.multiValueLines) { line in ResultSummaryRow(label: line.label, value: "\(viewModel.formattedCurrency(line.sourceAmount, code: result.from.code)) → \(viewModel.formattedCurrency(line.convertedAmount, code: result.to.code))") } }
             Text(rateDescription).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.75))
+            ShareLink(item: ShareSummaryBuilder().currencySummary(source: ConvertibleAmount(id: "amount", label: "Amount", amount: result.enteredAmount), converted: result.convertedAmount, rate: result.rate, from: result.from.code, to: result.to.code, fetchedAt: result.fetchedAt, cached: result.isCached)) { Text("Share Conversion") }
         }
         .accessibilityElement(children: .combine)
     }
 }
+
+private struct RecentCurrencyPairsView: View { @ObservedObject var viewModel: CurrencyConverterViewModel; var body: some View { ThemedCard { HStack { Text("Recent pairs").appFont(.h2); Spacer(); Button("Clear") { viewModel.clearRecentPairs() } }; ScrollView(.horizontal, showsIndicators: false) { HStack { ForEach(viewModel.recentPairs) { pair in Button("\(pair.sourceCode) → \(pair.destinationCode)") { viewModel.usePair(pair) }.buttonStyle(.bordered) } } } } } }
 
 private struct CurrencySelectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
     let currencies: [Currency]
     @Binding var selection: Currency
+    let isFavorite: (Currency) -> Bool
+    let toggleFavorite: (Currency) -> Void
     @State private var searchText = ""
 
     private var filtered: [Currency] {
@@ -147,6 +157,7 @@ private struct CurrencySelectionSheet: View {
                             Text(currency.flag ?? "").accessibilityHidden(true)
                             VStack(alignment: .leading) { Text(currency.code).appFont(.h3); Text(currency.name).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.75)) }
                             Spacer()
+                            Button { toggleFavorite(currency) } label: { Image(systemName: isFavorite(currency) ? "star.fill" : "star") }.accessibilityLabel(isFavorite(currency) ? "Unfavorite currency" : "Favorite currency")
                             if currency == selection { Image(systemName: "checkmark.circle.fill").foregroundStyle(AppTheme.highlight) }
                         }
                     }
