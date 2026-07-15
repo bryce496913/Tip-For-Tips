@@ -2,7 +2,7 @@ import SwiftUI
 
 enum AppRoute: Hashable {
     case guidedTipAssistant
-    case receiptScanner
+    case receiptScanner(ReceiptScannerContext = .newReceipt)
     case splitCalculator
     case currencyConverter
     case history
@@ -99,7 +99,8 @@ struct MainMenu: View {
     @ViewBuilder private func destination(for route: AppRoute) -> some View {
         switch route {
         case .guidedTipAssistant: GuidedTipAssistantView()
-        case .receiptScanner, .legacyReceipts: Receipts()
+        case let .receiptScanner(context): ReceiptScannerView(context: context)
+        case .legacyReceipts: Receipts()
         case .splitCalculator: SplitBillCalculator()
         case .currencyConverter: CurrencyConverter()
         case .history: HistoryPlaceholder()
@@ -116,7 +117,7 @@ struct MainMenu: View {
 
 struct DashboardQuickActions: View {
     private let actions: [(String, String, AppRoute)] = [
-        ("Scan Receipt", "doc.text.viewfinder", .receiptScanner),
+        ("Scan Receipt", "doc.text.viewfinder", .receiptScanner()),
         ("Split a Bill", "person.2", .splitCalculator),
         ("Convert Currency", "arrow.left.arrow.right", .currencyConverter),
         ("What Should I Tip?", "book", .tippingGuide)
@@ -157,9 +158,10 @@ final class GuidedTipAssistantViewModel: ObservableObject {
     private let engine = TipRecommendationEngine()
     private let repository: CalculationRepository
 
-    init(preferences: UserPreferences = .defaults, repository: CalculationRepository = FileCalculationRepository()) {
-        input = .defaults(preferences: preferences)
+    init(preferences: UserPreferences = .defaults, prefilledInput: TipCalculationInput? = nil, repository: CalculationRepository = FileCalculationRepository()) {
+        input = prefilledInput ?? .defaults(preferences: preferences)
         self.repository = repository
+        if prefilledInput != nil { currentStep = .service }
     }
 
     var selectedService: TippingService? { services.first { $0.id == input.serviceID } }
@@ -216,7 +218,8 @@ enum GuidedTipStep: Int, CaseIterable { case service, quality, gratuity, bill, p
 
 struct GuidedTipAssistantView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var model = GuidedTipAssistantViewModel()
+    @StateObject private var model: GuidedTipAssistantViewModel
+    init(prefilledInput: TipCalculationInput? = nil) { _model = StateObject(wrappedValue: GuidedTipAssistantViewModel(prefilledInput: prefilledInput)) }
     var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { progress; content; if let message = model.validationMessage { InlineErrorView(message: message) }; controls }.padding(AppSpacing.screen) } }.navigationTitle("Guided Tip Assistant").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }.hideKeyboardToolbar().alert("Guided Tip Assistant", isPresented: Binding(get: { model.saveConfirmation != nil }, set: { if !$0 { model.saveConfirmation = nil } })) { Button("OK", role: .cancel) {} } message: { Text(model.saveConfirmation ?? "") } }
     private var progress: some View { VStack(alignment: .leading) { Text("Step \(min(model.currentStep.rawValue + 1, 6)) of 6: \(model.currentStep.title)").appFont(.h3); ProgressView(value: Double(model.currentStep.rawValue + 1), total: 6).accessibilityValue("Step \(model.currentStep.rawValue + 1) of 6") } }
     @ViewBuilder private var content: some View { switch model.currentStep { case .service: serviceStep; case .quality: qualityStep; case .gratuity: gratuityStep; case .bill: billStep; case .people: peopleStep; case .result: resultStep } }
@@ -236,7 +239,7 @@ struct DecimalField: View { let title: String; @Binding var value: Decimal?; let
 struct WholeNumberField: View { let title: String; @Binding var value: Int?; @State private var text = ""; var body: some View { TextField(title, text: $text).keyboardType(.numberPad).textFieldStyle(AppTextFieldStyle()).onAppear { if let value { text = "\(value)" } }.onChange(of: text) { newValue in if let int = Int(newValue), String(int) == newValue, int > 0 { value = int } else { value = nil } }.accessibilityLabel(title) } }
 struct DifficultyToggle: View { let title: String; let flag: FoodDeliveryDifficulty; @Binding var selection: FoodDeliveryDifficulty; var body: some View { Toggle(title, isOn: Binding(get: { selection.contains(flag) }, set: { $0 ? selection.insert(flag) : selection.remove(flag) })).appFont(.paragraph) } }
 struct ResultSummary: View { let result: TipCalculationResult; var body: some View { ThemedCard { Text("Recommended Tip").appFont(.h2); Text(result.recommendedPercentage.map { "\($0)% — \(formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode))" } ?? formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode)).appFont(.h1).foregroundStyle(AppTheme.highlight); ResultSummaryRow(label: "Final total", value: formatMoney(result.finalTotal, code: result.input.currencyCode)); ResultSummaryRow(label: "Split between \(result.input.peopleCount) people", value: "\(formatMoney(result.amountPerPerson, code: result.input.currencyCode)) each"); ResultSummaryRow(label: result.normalRange == nil ? "Customary guidance" : "Customary range", value: result.customaryGuidance); if result.input.gratuityStatus == .yes { ResultSummaryRow(label: "Included gratuity", value: formatMoney(result.includedGratuityAmount, code: result.input.currencyCode)); ResultSummaryRow(label: "Suggested additional", value: formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode)); ResultSummaryRow(label: "Combined gratuity", value: formatMoney(result.combinedGratuity, code: result.input.currencyCode)) }; Text(result.explanation).appFont(.paragraph); if let lower = result.lowerAlternative { ResultSummaryRow(label: lower.label, value: alternativeText(lower, code: result.input.currencyCode)) }; if let higher = result.higherAlternative { ResultSummaryRow(label: higher.label, value: alternativeText(higher, code: result.input.currencyCode)) } }.accessibilityElement(children: .contain) } }
-struct ResultActions: View { @ObservedObject var model: GuidedTipAssistantViewModel; var body: some View { ThemedCard { Text("Next actions").appFont(.h2); NavigationLink("Split This Bill", value: model.splitRoute()); Button("Save Calculation") { Task { await model.saveResult() } }; NavigationLink("Convert Total", value: model.convertRoute()); NavigationLink("Add Receipt", value: AppRoute.receiptScanner); ShareLink(item: model.shareSummary) { Text("Share Summary") }; NavigationLink("Read Service Guide", value: model.guideRoute()) }.appFont(.paragraph).foregroundStyle(AppTheme.accent) } }
+struct ResultActions: View { @ObservedObject var model: GuidedTipAssistantViewModel; var body: some View { ThemedCard { Text("Next actions").appFont(.h2); NavigationLink("Split This Bill", value: model.splitRoute()); Button("Save Calculation") { Task { await model.saveResult() } }; NavigationLink("Convert Total", value: model.convertRoute()); NavigationLink("Add Receipt", value: AppRoute.receiptScanner(.attachToCalculation(model.result?.id ?? UUID()))); ShareLink(item: model.shareSummary) { Text("Share Summary") }; NavigationLink("Read Service Guide", value: model.guideRoute()) }.appFont(.paragraph).foregroundStyle(AppTheme.accent) } }
 func formatMoney(_ value: Decimal, code: String) -> String { (value as NSDecimalNumber).doubleValue.formatted(.currency(code: code)) }
 func alternativeText(_ alt: TipAlternative, code: String) -> String { if let p = alt.percentage { return "\(p)% — \(formatMoney(alt.amount, code: code))" }; return formatMoney(alt.amount, code: code) }
 
