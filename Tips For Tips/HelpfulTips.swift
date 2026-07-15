@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct HelpfulTips: View {
+    init(initialSectionID: String? = nil) { _searchText = State(initialValue: initialSectionID?.replacingOccurrences(of: "-", with: " ") ?? "") }
     @State private var expandedSectionIDs: Set<HelpfulTipsSection> = []
     @State private var expandedFAQIDs: Set<Int> = []
     @State private var selectedTipCategory: TippingTipCategory? = nil

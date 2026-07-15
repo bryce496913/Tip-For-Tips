@@ -428,7 +428,7 @@ struct UserPreferences: Codable, Hashable {
     static let defaults = UserPreferences(homeCurrencyCode: "USD", defaultTipPercentage: 20, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 1, roundingPreference: .exactCents, showTippingExplanations: true, hapticsEnabled: true, soundsEnabled: true, appearancePreference: .dark, hasCompletedOnboarding: false)
 }
 
-// MARK: - V2 Phase 5 Connected Experience Models
+// MARK: - Connected Experience Models
 
 enum HistoryRecordType: String, Codable, CaseIterable, Identifiable, Hashable {
     case tipCalculation

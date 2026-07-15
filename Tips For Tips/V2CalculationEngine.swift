@@ -6,6 +6,7 @@ enum TipCalculationError: LocalizedError, Equatable {
     case invalidPeopleCount
     case negativeAmount(String)
     case missingServiceDetail(String)
+    case invalidReceiptTotal(String)
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,7 @@ enum TipCalculationError: LocalizedError, Equatable {
         case .invalidPeopleCount: return "Enter at least one person."
         case .negativeAmount(let field): return "\(field) cannot be negative."
         case .missingServiceDetail(let field): return "Enter \(field)."
+        case .invalidReceiptTotal(let message): return message
         }
     }
 }
@@ -68,8 +70,32 @@ struct TipRecommendationEngine {
     }
 
     private func validateNonNegative(_ input: TipCalculationInput) throws { for (name, value) in [("Subtotal", input.subtotal), ("Tax", input.tax), ("Final total", input.finalTotal), ("Included gratuity", input.includedGratuityAmount), ("Included gratuity percentage", input.includedGratuityPercentage)] { if let value, value < 0 { throw TipCalculationError.negativeAmount(name) } } }
-    private func calculationBaseAmount(_ input: TipCalculationInput) throws -> Decimal { switch input.calculationBasis { case .subtotalBeforeTax: if let subtotal = input.subtotal { return subtotal }; if let total = input.finalTotal, let tax = input.tax { return total - tax }; case .finalTotalAfterTax: if let total = input.finalTotal { return total }; if let subtotal = input.subtotal { return subtotal + (input.tax ?? 0) } }; throw TipCalculationError.missingBillAmount }
-    private func currentReceiptTotal(input: TipCalculationInput, baseAmount: Decimal) -> Decimal { input.finalTotal ?? ((input.subtotal ?? baseAmount) + (input.tax ?? 0)) }
+    private func calculationBaseAmount(_ input: TipCalculationInput) throws -> Decimal {
+        switch input.calculationBasis {
+        case .subtotalBeforeTax:
+            if let subtotal = input.subtotal { return subtotal }
+            if let enteredFinalTotal = input.finalTotal {
+                let taxIncludedInEnteredTotal = input.tax ?? 0
+                let gratuityIncludedInEnteredTotal = input.finalTotalIncludesIncludedGratuity ? includedAmount(input: input, baseAmount: enteredFinalTotal) : 0
+                let derivedSubtotal = enteredFinalTotal - taxIncludedInEnteredTotal - gratuityIncludedInEnteredTotal
+                guard derivedSubtotal >= 0 else { throw TipCalculationError.invalidReceiptTotal("The entered final total is less than the tax or included gratuity already in that total.") }
+                return derivedSubtotal
+            }
+        case .finalTotalAfterTax:
+            if let total = input.finalTotal { return total }
+            if let subtotal = input.subtotal { return subtotal + (input.tax ?? 0) }
+        }
+        throw TipCalculationError.missingBillAmount
+    }
+    private func currentReceiptTotal(input: TipCalculationInput, baseAmount: Decimal) -> Decimal {
+        let subtotal = input.subtotal ?? baseAmount
+        let tax = input.tax ?? 0
+        let includedGratuity = includedAmount(input: input, baseAmount: baseAmount)
+        if let enteredFinalTotal = input.finalTotal {
+            return input.finalTotalIncludesIncludedGratuity ? enteredFinalTotal : enteredFinalTotal + includedGratuity
+        }
+        return subtotal + tax + includedGratuity
+    }
     private func includedAmount(input: TipCalculationInput, baseAmount: Decimal) -> Decimal { if input.gratuityStatus != .yes { return 0 }; if input.includedGratuityEntryMode == .percentage, let p = input.includedGratuityPercentage { return baseAmount * p / 100 }; return input.includedGratuityAmount ?? 0 }
     private func additionalTip(normalTip: Decimal, included: Decimal, input: TipCalculationInput, quality: ServiceQuality, maximumTip: Decimal) -> Decimal { guard input.gratuityStatus == .yes else { return normalTip }; if quality == .exceptional, included >= maximumTip { return max(0, normalTip - included) }; return max(0, normalTip - included) }
     private func recommendedPercentage(minimum: Decimal, standard: Decimal, maximum: Decimal, quality: ServiceQuality) -> Decimal { switch quality { case .poor: return max(0, minimum - 3); case .standard: return minimum; case .good: return standard; case .exceptional: return maximum } }
@@ -82,7 +108,7 @@ struct TipRecommendationEngine {
 
 enum LocalizedDecimalParser { static func parse(_ text: String, locale: Locale = .current) -> Decimal? { let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.locale = locale; if let number = formatter.number(from: text) { return number.decimalValue }; let normalized = text.replacingOccurrences(of: ",", with: "."); return Decimal(string: normalized) } }
 
-// MARK: - V2 Phase 4 Split Calculation
+// MARK: - Split Calculation
 
 enum SplitCalculationError: LocalizedError, Equatable {
     case invalidBill(String), noParticipants, negativeAmount(String), allocationMismatch(String), unassignedItem(String), invalidShare(String), danglingParticipant
@@ -93,6 +119,9 @@ struct SplitCalculationEngine {
     func calculate(session: SplitSession, now: Date = Date()) throws -> SplitCalculationResult {
         guard !session.participants.isEmpty else { throw SplitCalculationError.noParticipants }
         guard session.subtotal >= 0, session.tax >= 0, session.tipAmount >= 0, session.total >= 0 else { throw SplitCalculationError.invalidBill("Bill, tax, tip and total must be zero or positive.") }
+        let calculatedTotal = session.subtotal + session.tax + session.tipAmount
+        try require(calculatedTotal, equals: session.total, message: "Final total must equal subtotal plus tax plus tip before splitting.")
+        guard session.total >= session.tax + session.tipAmount else { throw SplitCalculationError.invalidBill("Final total cannot be less than tax plus tip.") }
         let ids = Set(session.participants.map(\.id))
         var bases = Dictionary(uniqueKeysWithValues: session.participants.map { ($0.id, Decimal(0)) })
         var itemBreakdowns = Dictionary(uniqueKeysWithValues: session.participants.map { ($0.id, [ParticipantItemBreakdown]()) })
@@ -123,9 +152,10 @@ struct SplitCalculationEngine {
         switch session.roundingRule { case .exactCents: rounded = allocate(sum(pre.map(\.1)), weights: pre.map { ($0.0.id, $0.1) }); case .nearestDollar: rounded = Dictionary(uniqueKeysWithValues: pre.map { ($0.0.id, round($0.1, scale: 0, mode: .plain)) }); case .roundUpToDollar: rounded = Dictionary(uniqueKeysWithValues: pre.map { ($0.0.id, round($0.1, scale: 0, mode: .up)) }) }
         let results = pre.map { p, amount in ParticipantSplitResult(id: UUID(), participantID: p.id, participantName: p.name.isEmpty ? "Person" : p.name, baseAmount: round(bases[p.id] ?? 0), taxAmount: round(taxes[p.id] ?? 0), tipAmount: round(tips[p.id] ?? 0), roundingAdjustment: round((rounded[p.id] ?? amount) - amount), finalAmount: round(rounded[p.id] ?? amount), isPaid: p.isPaid, itemBreakdown: itemBreakdowns[p.id] ?? []) }
         let collected = sum(results.map(\.finalAmount))
+        try require(collected, equals: session.total, message: "Split allocations must preserve the full collected total.")
         return SplitCalculationResult(id: UUID(), sessionID: session.id, session: session, participantResults: results, originalTotal: session.total, roundedCollectedTotal: collected, roundingDifference: round(collected - session.total), unallocatedAmount: round(session.subtotal - sum(bases.values)), createdAt: now)
     }
-    private func chargeAllocation(total: Decimal, mode: ChargeAllocationMode, participants: [SplitParticipant], bases: [UUID: Decimal], keyPath: KeyPath<SplitParticipant, Decimal?>, label: String) throws -> [UUID: Decimal] { switch mode { case .proportional: return allocate(total, weights: participants.map { ($0.id, bases[$0.id] ?? 0) }); case .equal: return allocate(total, among: participants.map(\.id)); case .custom: let vals = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0[keyPath: keyPath] ?? 0) }); try require(sum(vals.values), equals: total, message: "Custom \(label) allocations must equal the full \(label) amount."); return vals } }
+    private func chargeAllocation(total: Decimal, mode: ChargeAllocationMode, participants: [SplitParticipant], bases: [UUID: Decimal], keyPath: KeyPath<SplitParticipant, Decimal?>, label: String) throws -> [UUID: Decimal] { switch mode { case .proportional: let weights = participants.map { ($0.id, bases[$0.id] ?? 0) }; return sum(weights.map(\.1)) == 0 && total > 0 ? allocate(total, among: participants.map(\.id)) : allocate(total, weights: weights); case .equal: return allocate(total, among: participants.map(\.id)); case .custom: let vals = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0[keyPath: keyPath] ?? 0) }); try require(sum(vals.values), equals: total, message: "Custom \(label) allocations must equal the full \(label) amount."); return vals } }
     private func allocate(_ total: Decimal, among ids: [UUID]) -> [UUID: Decimal] { allocate(total, weights: ids.map { ($0, 1) }) }
     private func allocate(_ total: Decimal, weights: [(UUID, Decimal)]) -> [UUID: Decimal] { let totalCents = cents(total); let weightSum = sum(weights.map(\.1)); guard weightSum > 0, !weights.isEmpty else { return Dictionary(uniqueKeysWithValues: weights.map { ($0.0, 0) }) }; var result: [UUID: Int] = [:]; var remainders: [(UUID, Decimal)] = []; var used = 0; for (id,w) in weights { let exact = Decimal(totalCents) * w / weightSum; let floorCents = NSDecimalNumber(decimal: exact).rounding(accordingToBehavior: NSDecimalNumberHandler(roundingMode: .down, scale: 0, raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false)).intValue; result[id] = floorCents; used += floorCents; remainders.append((id, exact - Decimal(floorCents))) }; for (id,_) in remainders.sorted(by: { $0.1 == $1.1 ? $0.0.uuidString < $1.0.uuidString : $0.1 > $1.1 }).prefix(max(0,totalCents-used)) { result[id, default: 0] += 1 }; return Dictionary(uniqueKeysWithValues: result.map { ($0.key, Decimal($0.value) / 100) }) }
     private func cents(_ d: Decimal) -> Int { NSDecimalNumber(decimal: round(d)).multiplying(byPowerOf10: 2).intValue }
