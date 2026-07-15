@@ -160,3 +160,45 @@ struct EmptyStateView: View {
     let systemImage: String; let title: String; let message: String
     var body: some View { VStack(spacing: AppSpacing.standard) { Image(systemName: systemImage).font(.title2).foregroundStyle(AppTheme.highlight); Text(title).appFont(.h2); Text(message).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.8)).multilineTextAlignment(.center) }.frame(maxWidth: .infinity).padding(AppSpacing.large) }
 }
+
+enum AppCornerRadius {
+    static let small: CGFloat = 10
+    static let card: CGFloat = 16
+    static let large: CGFloat = 22
+}
+
+struct ResultSummaryRow: View {
+    let label: String
+    let value: String
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.78))
+            Spacer(minLength: AppSpacing.standard)
+            Text(value).appFont(.paragraph).foregroundStyle(AppTheme.text).multilineTextAlignment(.trailing)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct InlineErrorView: View {
+    let message: String
+    var body: some View { Label(message, systemImage: "exclamationmark.triangle").appFont(.paragraph).foregroundStyle(AppTheme.highlight).fixedSize(horizontal: false, vertical: true) }
+}
+
+struct LoadingStateView: View {
+    let message: String
+    var body: some View { HStack { ProgressView(); Text(message).appFont(.paragraph) }.frame(maxWidth: .infinity).padding(AppSpacing.section) }
+}
+
+struct FilterChip: View {
+    let title: String
+    var isSelected: Bool
+    let action: () -> Void
+    var body: some View { Button(action: action) { Text(title).appFont(.paragraph).padding(.horizontal, AppSpacing.section).padding(.vertical, AppSpacing.small) }.background(isSelected ? AppTheme.accent : AppTheme.surface).clipShape(Capsule()).overlay(Capsule().stroke(AppTheme.accent, lineWidth: 1)).accessibilityValue(isSelected ? "Selected" : "Not selected") }
+}
+
+enum AppButtonStylePublic {
+    static var primary: some ButtonStyle { AppButtonStyle(background: AppTheme.accent, outlined: false) }
+    static var secondary: some ButtonStyle { AppButtonStyle(background: AppTheme.surface, outlined: true) }
+    static var destructive: some ButtonStyle { AppButtonStyle(background: AppTheme.highlight, outlined: false) }
+}

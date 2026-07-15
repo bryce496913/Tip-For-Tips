@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EEV200012BD8000000123456 /* V2Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200022BD8000000123456 /* V2Models.swift */; };
+		EEV200032BD8000000123456 /* V2Repositories.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200042BD8000000123456 /* V2Repositories.swift */; };
+		EEV200052BD8000000123456 /* V2CalculationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200062BD8000000123456 /* V2CalculationEngine.swift */; };
 		EEAA00022BD7AAAA00123456 /* TippingGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */; };
 		EEAA00012BD7AAAA00123456 /* HelpfulTipsContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */; };
 		EE2C07272BD7F97E00F29EF6 /* EvenSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2C07262BD7F97E00F29EF6 /* EvenSplitView.swift */; };
@@ -27,6 +30,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		EEV200022BD8000000123456 /* V2Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2Models.swift; sourceTree = "<group>"; };
+		EEV200042BD8000000123456 /* V2Repositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2Repositories.swift; sourceTree = "<group>"; };
+		EEV200062BD8000000123456 /* V2CalculationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2CalculationEngine.swift; sourceTree = "<group>"; };
 		EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpfulTipsContent.swift; sourceTree = "<group>"; };
 		EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TippingGuidance.swift; sourceTree = "<group>"; };
 		EE2C07262BD7F97E00F29EF6 /* EvenSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvenSplitView.swift; sourceTree = "<group>"; };
@@ -90,6 +96,9 @@
 				EE648D762BC2F36100170654 /* HelpfulTips.swift */,
 				EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */,
 				EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */,
+				EEV200022BD8000000123456 /* V2Models.swift */,
+				EEV200042BD8000000123456 /* V2Repositories.swift */,
+				EEV200062BD8000000123456 /* V2CalculationEngine.swift */,
 				EE648D6A2BC2F24600170654 /* Color.swift */,
 				EE648D662BC2EEF800170654 /* LaunchScreen.swift */,
 				EE648D5C2BBF5D6D00170654 /* Assets.xcassets */,
@@ -190,6 +199,9 @@
 				EE94B0D22BD2E3DA00538D5A /* CurrencyConverterViewModel.swift in Sources */,
 				EE648D732BC2F34500170654 /* Receipts.swift in Sources */,
 				EE648D6B2BC2F24600170654 /* Color.swift in Sources */,
+				EEV200012BD8000000123456 /* V2Models.swift in Sources */,
+				EEV200032BD8000000123456 /* V2Repositories.swift in Sources */,
+				EEV200052BD8000000123456 /* V2CalculationEngine.swift in Sources */,
 				EE648D692BC2EF2500170654 /* MainMenu.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -7,7 +7,6 @@ struct SavedNote: Codable, Identifiable, Equatable {
     var updatedAt: Date
 }
 
-struct StoredDataEnvelope<Record: Codable>: Codable { let version: Int; var records: [Record] }
 
 enum NoteStorageError: LocalizedError {
     case load, save, delete, migration
