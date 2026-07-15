@@ -8,7 +8,7 @@ struct TipCalculator: View {
     @State private var isServicePickerPresented = false
     @State private var didCalculate = false
 
-    private let services = ["Restaurant with table service", "Bars", "Yellow Taxi", "Uber/Lyft driver", "Food delivery", "Shuttle driver", "Doorman", "Porter", "Housekeeping", "Room Service", "Tour Guides", "Tour Bus Drivers", "Spa", "Hairdressers/Barbers", "Nail Salon"]
+    private let services = TippingGuidance.services
     private func decimalValue(_ text: String) -> Double? {
         let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.locale = .current
         if let n = formatter.number(from: text), n.doubleValue >= 0 { return n.doubleValue }
@@ -16,12 +16,10 @@ struct TipCalculator: View {
         return nil
     }
 
-    private func reset() { totalBill = ""; tipAmount = ""; tipInputMode = .percentage; didCalculate = false }
+    private func reset() { totalBill = ""; tipAmount = ""; tipInputMode = .percentage; selectedServiceIndex = 0; didCalculate = false }
 
-    private let recommendedTips: [String: String] = ["Restaurant with table service": "15-20%", "Bars": "15-20% or $1-$2 per drink", "Yellow Taxi": "10-20%", "Uber/Lyft driver": "10-20%", "Food delivery": "15-20%", "Shuttle driver": "$2-$5 per person", "Doorman": "$1-$5", "Porter": "$1-$2 per bag", "Housekeeping": "$2-$5 per night", "Room Service": "15-20%", "Tour Guides": "$2-$5 per participating person for local tours. 15-20% of the ticket price for a day trip", "Tour Bus Drivers": "$2-$5 per person", "Spa": "15-20%", "Hairdressers/Barbers": "15-20%", "Nail Salon": "15-20%"]
-
-    private var selectedService: String { services.indices.contains(selectedServiceIndex) ? services[selectedServiceIndex] : services[0] }
-    private var recommendedTip: String { recommendedTips[selectedService] ?? "" }
+    private var selectedService: TippingService { services.indices.contains(selectedServiceIndex) ? services[selectedServiceIndex] : services[0] }
+    private var recommendedTip: String { selectedService.recommendation }
     private var billValue: Double { max(decimalValue(totalBill) ?? 0, 0) }
     private var tipValue: Double { max(decimalValue(tipAmount) ?? 0, 0) }
     private var canCalculate: Bool { decimalValue(totalBill) != nil && decimalValue(tipAmount) != nil }
@@ -41,7 +39,7 @@ struct TipCalculator: View {
 
                     ThemedCard {
                         Text("Service") .appFont(.h2)
-                        SecondaryButton(title: selectedService) { isServicePickerPresented = true }
+                        SecondaryButton(title: selectedService.name) { isServicePickerPresented = true }
                         Text("Recommended Tip: \(recommendedTip)")
                             .appFont(.paragraph)
                             .foregroundStyle(AppTheme.text)
@@ -90,6 +88,10 @@ struct TipCalculator: View {
         .sheet(isPresented: $isServicePickerPresented) {
             ServicePicker(selectedServiceIndex: $selectedServiceIndex, services: services)
         }
+        .onChange(of: totalBill) { _ in didCalculate = false }
+        .onChange(of: tipAmount) { _ in didCalculate = false }
+        .onChange(of: tipInputMode) { _ in didCalculate = false }
+        .onChange(of: selectedServiceIndex) { _ in didCalculate = false }
     }
 }
 
@@ -115,25 +117,28 @@ struct RadioButton: View {
 struct ServicePicker: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var selectedServiceIndex: Int
-    let services: [String]
+    let services: [TippingService]
+    @State private var draftIndex: Int = 0
 
     var body: some View {
         NavigationStack {
             AppScreen {
-                Picker("Service", selection: $selectedServiceIndex) {
+                Picker("Service", selection: $draftIndex) {
                     ForEach(services.indices, id: \.self) { index in
-                        Text(services[index]).foregroundStyle(AppTheme.text)
+                        Text(services[index].name).foregroundStyle(AppTheme.text)
                     }
                 }
+                .accessibilityValue(services.indices.contains(draftIndex) ? services[draftIndex].name : "")
                 .pickerStyle(.wheel)
             }
             .navigationTitle("Select Service")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { selectedServiceIndex = draftIndex; dismiss() } }
             }
         }
         .presentationDetents([.medium])
+        .onAppear { draftIndex = selectedServiceIndex }
     }
 }
 

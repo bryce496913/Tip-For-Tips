@@ -7,11 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EEAA00022BD7AAAA00123456 /* TippingGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */; };
 		EEAA00012BD7AAAA00123456 /* HelpfulTipsContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */; };
 		EE2C07272BD7F97E00F29EF6 /* EvenSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2C07262BD7F97E00F29EF6 /* EvenSplitView.swift */; };
 		EE2C07292BD7F99500F29EF6 /* CustomSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2C07282BD7F99500F29EF6 /* CustomSplitView.swift */; };
 		EE648D592BBF5D6B00170654 /* Tips_For_TipsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE648D582BBF5D6B00170654 /* Tips_For_TipsApp.swift */; };
-		EE648D5B2BBF5D6B00170654 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE648D5A2BBF5D6B00170654 /* ContentView.swift */; };
 		EE648D5D2BBF5D6D00170654 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EE648D5C2BBF5D6D00170654 /* Assets.xcassets */; };
 		EE648D602BBF5D6D00170654 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EE648D5F2BBF5D6D00170654 /* Preview Assets.xcassets */; };
 		EE648D672BC2EEF800170654 /* LaunchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE648D662BC2EEF800170654 /* LaunchScreen.swift */; };
@@ -28,11 +28,11 @@
 
 /* Begin PBXFileReference section */
 		EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpfulTipsContent.swift; sourceTree = "<group>"; };
+		EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TippingGuidance.swift; sourceTree = "<group>"; };
 		EE2C07262BD7F97E00F29EF6 /* EvenSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvenSplitView.swift; sourceTree = "<group>"; };
 		EE2C07282BD7F99500F29EF6 /* CustomSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomSplitView.swift; sourceTree = "<group>"; };
 		EE648D552BBF5D6B00170654 /* Tips For Tips.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Tips For Tips.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE648D582BBF5D6B00170654 /* Tips_For_TipsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tips_For_TipsApp.swift; sourceTree = "<group>"; };
-		EE648D5A2BBF5D6B00170654 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		EE648D5C2BBF5D6D00170654 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		EE648D5F2BBF5D6D00170654 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		EE648D662BC2EEF800170654 /* LaunchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreen.swift; sourceTree = "<group>"; };
@@ -89,8 +89,8 @@
 				EE648D742BC2F35500170654 /* NotePad.swift */,
 				EE648D762BC2F36100170654 /* HelpfulTips.swift */,
 				EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */,
+				EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */,
 				EE648D6A2BC2F24600170654 /* Color.swift */,
-				EE648D5A2BBF5D6B00170654 /* ContentView.swift */,
 				EE648D662BC2EEF800170654 /* LaunchScreen.swift */,
 				EE648D5C2BBF5D6D00170654 /* Assets.xcassets */,
 				EE648D5E2BBF5D6D00170654 /* Preview Content */,
@@ -178,7 +178,7 @@
 			files = (
 				EE648D772BC2F36100170654 /* HelpfulTips.swift in Sources */,
 				EEAA00012BD7AAAA00123456 /* HelpfulTipsContent.swift in Sources */,
-				EE648D5B2BBF5D6B00170654 /* ContentView.swift in Sources */,
+				EEAA00022BD7AAAA00123456 /* TippingGuidance.swift in Sources */,
 				EE648D592BBF5D6B00170654 /* Tips_For_TipsApp.swift in Sources */,
 				EE648D672BC2EEF800170654 /* LaunchScreen.swift in Sources */,
 				EE2C07292BD7F99500F29EF6 /* CustomSplitView.swift in Sources */,
@@ -247,7 +247,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Tips For Tips requires camera access for taking photos of receipts";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Tips for Tips uses the camera to save photos of your receipts.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Tips for Tips uses your photo library so you can save an existing receipt image.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -302,7 +303,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Tips For Tips requires camera access for taking photos of receipts";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Tips for Tips uses the camera to save photos of your receipts.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Tips for Tips uses your photo library so you can save an existing receipt image.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -328,7 +330,7 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -357,7 +359,7 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
