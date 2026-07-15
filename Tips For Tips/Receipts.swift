@@ -3,7 +3,7 @@ import PhotosUI
 import AVFoundation
 
 enum ReceiptStorageError: LocalizedError {
-    case conversion, directory, imageWrite, metadataWrite, metadataRead, imageLoad, delete, rename
+    case conversion, directory, imageWrite, metadataWrite, metadataRead, imageLoad, delete, rename, invalidImageFilename
     var errorDescription: String? {
         switch self {
         case .conversion: return "Unable to prepare this receipt image. Please try another image."
@@ -14,6 +14,7 @@ enum ReceiptStorageError: LocalizedError {
         case .imageLoad: return "Unable to open this receipt image."
         case .delete: return "Unable to delete this receipt. Please try again."
         case .rename: return "Unable to rename this receipt. Please try again."
+        case .invalidImageFilename: return "Your saved receipt information needs recovery before files can be changed."
         }
     }
 }
@@ -23,7 +24,7 @@ actor ReceiptStore {
     private let fileManager: FileManager
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private var receiptsDir: URL { rootURL.appendingPathComponent("Receipts", isDirectory: true) }
+    private var receiptsDir: URL { rootURL.appendingPathComponent("V2/Receipts", isDirectory: true) }
     private var imagesDir: URL { receiptsDir.appendingPathComponent("Images", isDirectory: true) }
     private var thumbsDir: URL { receiptsDir.appendingPathComponent("Thumbnails", isDirectory: true) }
     private var metadataURL: URL { receiptsDir.appendingPathComponent("receipts.json") }
@@ -39,7 +40,7 @@ actor ReceiptStore {
         let id = UUID(); let imageName = "\(id.uuidString).jpg"; let thumbName = "\(id.uuidString)-thumb.jpg"
         guard let fullData = image.normalizedForReceipt().resizedForReceipt(maxDimension: 1800).jpegData(compressionQuality: 0.82), let thumbData = image.normalizedForReceipt().resizedForReceipt(maxDimension: 420).jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
         do { try fullData.write(to: imagesDir.appendingPathComponent(imageName), options: [.atomic]); try thumbData.write(to: thumbsDir.appendingPathComponent(thumbName), options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
-        var records = (try? load()) ?? []
+        var records = try load()
         let now = Date(); records.append(ReceiptRecord(id: id, merchantName: name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: imageName, thumbnailFilename: thumbName, notes: "", createdAt: now, updatedAt: now)); try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -49,15 +50,38 @@ actor ReceiptStore {
         let thumbName = record.thumbnailFilename ?? "\(record.id.uuidString)-thumb.jpg"
         guard let fullData = fullImage.jpegData(compressionQuality: 0.82), let thumbData = thumbnail.jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
         do { try fullData.write(to: imagesDir.appendingPathComponent(imageName), options: [.atomic]); try thumbData.write(to: thumbsDir.appendingPathComponent(thumbName), options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
-        do { var records = (try? load()) ?? []; records.removeAll { $0.id == record.id }; records.insert(record, at: 0); try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt } }
+        do { var records = try load(); records.removeAll { $0.id == record.id }; records.insert(record, at: 0); try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt } }
         catch { try? fileManager.removeItem(at: imagesDir.appendingPathComponent(imageName)); try? fileManager.removeItem(at: thumbsDir.appendingPathComponent(thumbName)); throw ReceiptStorageError.metadataWrite }
     }
 
     func rename(_ record: ReceiptRecord, to newName: String) throws -> [ReceiptRecord] { var records = try load(); guard let index = records.firstIndex(where: { $0.id == record.id }) else { return records }; records[index].merchantName = newName; records[index].updatedAt = Date(); do { try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt } } catch { throw ReceiptStorageError.rename } }
-    func delete(_ record: ReceiptRecord) throws -> [ReceiptRecord] { var records = try load(); guard records.contains(where: { $0.id == record.id }) else { return records }; do { try fileManager.removeItem(at: imagesDir.appendingPathComponent(record.imageFilename ?? "")); if let t = record.thumbnailFilename { try? fileManager.removeItem(at: thumbsDir.appendingPathComponent(t)) }; records.removeAll { $0.id == record.id }; try saveMetadata(records); return records } catch { throw ReceiptStorageError.delete } }
+    func delete(_ record: ReceiptRecord) throws -> [ReceiptRecord] { var records = try load(); guard records.contains(where: { $0.id == record.id }) else { return records }; do { let staged = try stageFilesForDeletion(record); records.removeAll { $0.id == record.id }; do { try saveMetadata(records); for url in staged { if fileManager.fileExists(atPath: url.path) { try? fileManager.removeItem(at: url) } }; return records } catch { try restore(stagedFiles: staged); throw error } } catch { throw ReceiptStorageError.delete } }
 
-    private func ensureDirectories() throws { do { try fileManager.createDirectory(at: imagesDir, withIntermediateDirectories: true); try fileManager.createDirectory(at: thumbsDir, withIntermediateDirectories: true) } catch { throw ReceiptStorageError.directory } }
+    private var temporaryDir: URL { receiptsDir.appendingPathComponent("Temporary", isDirectory: true) }
+    private func ensureDirectories() throws { do { try fileManager.createDirectory(at: imagesDir, withIntermediateDirectories: true); try fileManager.createDirectory(at: thumbsDir, withIntermediateDirectories: true); try fileManager.createDirectory(at: temporaryDir, withIntermediateDirectories: true) } catch { throw ReceiptStorageError.directory } }
     private func saveMetadata(_ records: [ReceiptRecord]) throws { do { try ensureDirectories(); let data = try encoder.encode(StoredDataEnvelope(version: 1, records: records)); try data.write(to: metadataURL, options: [.atomic]) } catch { throw ReceiptStorageError.metadataWrite } }
+
+    private func stageFilesForDeletion(_ record: ReceiptRecord) throws -> [URL] {
+        var staged: [URL] = []
+        for (filename, dir) in [(record.imageFilename, imagesDir), (record.thumbnailFilename, thumbsDir)] {
+            guard let filename else { continue }
+            let source = try validatedURL(filename: filename, in: dir)
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            let destination = temporaryDir.appendingPathComponent("delete-\(UUID().uuidString)-\(source.lastPathComponent)")
+            try fileManager.moveItem(at: source, to: destination)
+            staged.append(destination)
+        }
+        return staged
+    }
+    private func restore(stagedFiles: [URL]) throws { for staged in stagedFiles { let name = staged.lastPathComponent.components(separatedBy: "-").dropFirst(2).joined(separator: "-"); let targetDir = name.contains("-thumb") ? thumbsDir : imagesDir; try? fileManager.moveItem(at: staged, to: targetDir.appendingPathComponent(name)) } }
+    private func validatedURL(filename: String, in directory: URL) throws -> URL {
+        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed == (trimmed as NSString).lastPathComponent, !trimmed.contains(".."), !trimmed.hasPrefix("/") else { throw ReceiptStorageError.invalidImageFilename }
+        let dir = directory.standardizedFileURL.resolvingSymlinksInPath()
+        let url = dir.appendingPathComponent(trimmed).standardizedFileURL.resolvingSymlinksInPath()
+        guard url.path.hasPrefix(dir.path + "/"), url.deletingLastPathComponent().path == dir.path else { throw ReceiptStorageError.invalidImageFilename }
+        return url
+    }
 
     /// Migrates old root receipts.json records with embedded image Data into JPEG files, then writes metadata.
     /// The old JSON is moved to receipts.json.legacy after the new metadata is saved, making migration idempotent.

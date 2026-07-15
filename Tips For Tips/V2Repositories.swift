@@ -172,28 +172,98 @@ actor V2MigrationCoordinator {
     private func migrateLegacyNotes() async throws -> Int {
         let legacyURL = rootURL.appendingPathComponent("notes.json")
         guard fileManager.fileExists(atPath: legacyURL.path) else { return 0 }
-        // Phase 1 intentionally backs up standalone notes but does not attach them to unrelated receipts.
         return 0
     }
 }
 
 
 actor FileReceiptRepository: ReceiptRepository {
-    private let store: CodableFileStore<ReceiptRecord>
     private let root: URL
-    init(rootURL: URL? = nil) {
-        root = rootURL ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        store = CodableFileStore(fileURL: root.appendingPathComponent("V2/Receipts/receipts.json"))
+    private let fileManager: FileManager
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+    private var receiptsDir: URL { root.appendingPathComponent("V2/Receipts", isDirectory: true) }
+    private var imagesDir: URL { receiptsDir.appendingPathComponent("Images", isDirectory: true) }
+    private var thumbsDir: URL { receiptsDir.appendingPathComponent("Thumbnails", isDirectory: true) }
+    private var backupsDir: URL { receiptsDir.appendingPathComponent("Backups", isDirectory: true) }
+    private var temporaryDir: URL { receiptsDir.appendingPathComponent("Temporary", isDirectory: true) }
+    private var metadataURL: URL { receiptsDir.appendingPathComponent("receipts.json") }
+
+    init(rootURL: URL? = nil, fileManager: FileManager = .default) {
+        root = rootURL ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        self.fileManager = fileManager
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .iso8601
     }
-    func fetchReceipts() async throws -> [ReceiptRecord] { try await store.load(version: V2MigrationCoordinator.currentVersion) }
-    func saveReceipt(_ receipt: ReceiptRecord) async throws { var records = try await fetchReceipts(); records.removeAll { $0.id == receipt.id }; records.insert(receipt, at: 0); try await store.save(records, version: V2MigrationCoordinator.currentVersion) }
-    func deleteReceipt(id: UUID) async throws { var records = try await fetchReceipts(); if let receipt = records.first(where: { $0.id == id }) { try? deleteReceiptFiles(receipt) }; records.removeAll { $0.id == id }; try await store.save(records, version: V2MigrationCoordinator.currentVersion) }
-    private func deleteReceiptFiles(_ receipt: ReceiptRecord) throws {
-        let directory = root.appendingPathComponent("V2/Receipts/Images", isDirectory: true)
-        for filename in [receipt.imageFilename, receipt.thumbnailFilename].compactMap({ $0 }) {
-            let url = directory.appendingPathComponent(filename)
-            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+
+    func fetchReceipts() async throws -> [ReceiptRecord] { try loadRecords() }
+    func saveReceipt(_ receipt: ReceiptRecord) async throws { var records = try loadRecords(); records.removeAll { $0.id == receipt.id }; records.insert(receipt, at: 0); try writeRecordsAtomically(records) }
+    func deleteReceipt(id: UUID) async throws {
+        var records = try loadRecords()
+        guard let receipt = records.first(where: { $0.id == id }) else { return }
+        let staged = try stageFilesForDeletion(receipt)
+        records.removeAll { $0.id == id }
+        do { try writeRecordsAtomically(records); try staged.forEach { if fileManager.fileExists(atPath: $0.path) { try fileManager.removeItem(at: $0) } } }
+        catch { try restore(stagedFiles: staged); throw error }
+    }
+
+    func imageURL(for record: ReceiptRecord, thumbnail: Bool = false) throws -> URL {
+        if thumbnail, let thumb = record.thumbnailFilename { return try validatedURL(filename: thumb, in: thumbsDir) }
+        guard let image = record.imageFilename else { throw ReceiptStorageError.invalidImageFilename }
+        return try validatedURL(filename: image, in: imagesDir)
+    }
+
+    private func ensureDirectories() throws { for dir in [receiptsDir, imagesDir, thumbsDir, backupsDir, temporaryDir] { try fileManager.createDirectory(at: dir, withIntermediateDirectories: true) } }
+    private func loadRecords() throws -> [ReceiptRecord] {
+        try ensureDirectories()
+        guard fileManager.fileExists(atPath: metadataURL.path) else { return [] }
+        do { return try decoder.decode(StoredDataEnvelope<ReceiptRecord>.self, from: Data(contentsOf: metadataURL)).records.sorted { $0.updatedAt > $1.updatedAt } }
+        catch { try backupCorruptMetadataIfNeeded(); throw ReceiptStorageError.metadataRead }
+    }
+    private func backupCorruptMetadataIfNeeded() throws {
+        try ensureDirectories()
+        let attrs = try? fileManager.attributesOfItem(atPath: metadataURL.path)
+        let stamp = Int((attrs?[.modificationDate] as? Date ?? Date()).timeIntervalSince1970)
+        let backupURL = backupsDir.appendingPathComponent("receipts-corrupt-").appendingPathExtension("\(stamp).json")
+        if !fileManager.fileExists(atPath: backupURL.path) { try fileManager.copyItem(at: metadataURL, to: backupURL) }
+    }
+    private func writeRecordsAtomically(_ records: [ReceiptRecord]) throws {
+        try ensureDirectories()
+        let envelope = StoredDataEnvelope(version: V2MigrationCoordinator.currentVersion, records: records)
+        let tempURL = temporaryDir.appendingPathComponent("receipts-\(UUID().uuidString).json")
+        do {
+            let data = try encoder.encode(envelope)
+            try data.write(to: tempURL, options: [.atomic])
+            _ = try decoder.decode(StoredDataEnvelope<ReceiptRecord>.self, from: Data(contentsOf: tempURL))
+            if fileManager.fileExists(atPath: metadataURL.path) {
+                let previous = backupsDir.appendingPathComponent("receipts-previous-\(Int(Date().timeIntervalSince1970)).json")
+                try? fileManager.copyItem(at: metadataURL, to: previous)
+            }
+            if fileManager.fileExists(atPath: metadataURL.path) { _ = try fileManager.replaceItemAt(metadataURL, withItemAt: tempURL, backupItemName: nil, options: [.usingNewMetadataOnly]) } else { try fileManager.moveItem(at: tempURL, to: metadataURL) }
+        } catch { try? fileManager.removeItem(at: tempURL); throw ReceiptStorageError.metadataWrite }
+    }
+    private func stageFilesForDeletion(_ record: ReceiptRecord) throws -> [URL] {
+        try ensureDirectories()
+        var staged: [URL] = []
+        for (filename, dir) in [(record.imageFilename, imagesDir), (record.thumbnailFilename, thumbsDir)] {
+            guard let filename else { continue }
+            let source = try validatedURL(filename: filename, in: dir)
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            let destination = temporaryDir.appendingPathComponent("delete-\(UUID().uuidString)-\(source.lastPathComponent)")
+            try fileManager.moveItem(at: source, to: destination)
+            staged.append(destination)
         }
+        return staged
+    }
+    private func restore(stagedFiles: [URL]) throws { for staged in stagedFiles { let name = staged.lastPathComponent.components(separatedBy: "-").dropFirst(2).joined(separator: "-"); let targetDir = name.contains("-thumb") ? thumbsDir : imagesDir; let target = targetDir.appendingPathComponent(name); if fileManager.fileExists(atPath: staged.path) { try? fileManager.moveItem(at: staged, to: target) } } }
+    private func validatedURL(filename: String, in directory: URL) throws -> URL {
+        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed == (trimmed as NSString).lastPathComponent, !trimmed.contains(".."), !trimmed.hasPrefix("/") else { throw ReceiptStorageError.invalidImageFilename }
+        let dir = directory.standardizedFileURL.resolvingSymlinksInPath()
+        let url = dir.appendingPathComponent(trimmed, isDirectory: false).standardizedFileURL.resolvingSymlinksInPath()
+        guard url.path.hasPrefix(dir.path + "/"), url.path != dir.path, url.deletingLastPathComponent().path == dir.path else { throw ReceiptStorageError.invalidImageFilename }
+        return url
     }
 }
 
@@ -208,7 +278,7 @@ actor FileCalculationRepository: CalculationRepository {
     func deleteCalculation(id: UUID) async throws { var records = try await fetchCalculations(); records.removeAll { $0.id == id }; try await store.save(records, version: V2MigrationCoordinator.currentVersion) }
 }
 
-// MARK: - V2 Phase 5 Repositories and Services
+// MARK: - Repositories and Services
 
 actor FileCurrencyRateRepository: CurrencyRateRepository {
     private let store: CodableFileStore<StoredExchangeRate>
