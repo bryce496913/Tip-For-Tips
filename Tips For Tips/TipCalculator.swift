@@ -4,7 +4,7 @@ struct TipCalculator: View {
     @State private var selectedServiceIndex = 0
     @State private var totalBill = ""
     @State private var tipAmount = ""
-    @State private var isPercentageSelected = true
+    @State private var tipInputMode: TipInputMode = .percentage
     @State private var isServicePickerPresented = false
     @State private var didCalculate = false
 
@@ -16,7 +16,7 @@ struct TipCalculator: View {
         return nil
     }
 
-    private func reset() { totalBill = ""; tipAmount = ""; isPercentageSelected = true; didCalculate = false }
+    private func reset() { totalBill = ""; tipAmount = ""; tipInputMode = .percentage; didCalculate = false }
 
     private let recommendedTips: [String: String] = ["Restaurant with table service": "15-20%", "Bars": "15-20% or $1-$2 per drink", "Yellow Taxi": "10-20%", "Uber/Lyft driver": "10-20%", "Food delivery": "15-20%", "Shuttle driver": "$2-$5 per person", "Doorman": "$1-$5", "Porter": "$1-$2 per bag", "Housekeeping": "$2-$5 per night", "Room Service": "15-20%", "Tour Guides": "$2-$5 per participating person for local tours. 15-20% of the ticket price for a day trip", "Tour Bus Drivers": "$2-$5 per person", "Spa": "15-20%", "Hairdressers/Barbers": "15-20%", "Nail Salon": "15-20%"]
 
@@ -25,7 +25,7 @@ struct TipCalculator: View {
     private var billValue: Double { max(decimalValue(totalBill) ?? 0, 0) }
     private var tipValue: Double { max(decimalValue(tipAmount) ?? 0, 0) }
     private var canCalculate: Bool { decimalValue(totalBill) != nil && decimalValue(tipAmount) != nil }
-    private var calculatedTip: Double { isPercentageSelected ? billValue * tipValue / 100 : tipValue }
+    private var calculatedTip: Double { tipInputMode == .percentage ? billValue * tipValue / 100 : tipValue }
     private var totalAmount: Double { billValue + calculatedTip }
 
     var body: some View {
@@ -55,10 +55,10 @@ struct TipCalculator: View {
                             .multilineTextAlignment(.center)
                             .accessibilityLabel("Bill amount")
                         HStack {
-                            RadioButton(title: "Percent", isSelected: isPercentageSelected) { isPercentageSelected = true }
-                            RadioButton(title: "Dollars", isSelected: !isPercentageSelected) { isPercentageSelected = false }
+                            RadioButton(title: "Percent", isSelected: tipInputMode == .percentage) { tipInputMode = .percentage }
+                            RadioButton(title: "Dollars", isSelected: tipInputMode == .fixedAmount) { tipInputMode = .fixedAmount }
                         }
-                        TextField(isPercentageSelected ? "Tip percent" : "Tip dollars", text: $tipAmount)
+                        TextField(tipInputMode == .percentage ? "Tip percent" : "Tip dollars", text: $tipAmount)
                             .keyboardType(.decimalPad)
                             .textFieldStyle(AppTextFieldStyle())
                             .multilineTextAlignment(.center)
