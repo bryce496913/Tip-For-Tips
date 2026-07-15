@@ -84,3 +84,23 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
         }
     }
 }
+
+final class IncludedGratuityPercentageReleaseTests: XCTestCase {
+    func testPercentageIncludedGratuityDerivesSubtotalFromPreTaxBase() throws {
+        var input = TipCalculationInput.defaults()
+        input.serviceID = "restaurant"
+        input.calculationBasis = .subtotalBeforeTax
+        input.subtotal = nil
+        input.tax = 8
+        input.finalTotal = 128
+        input.finalTotalIncludesIncludedGratuity = true
+        input.gratuityStatus = .yes
+        input.includedGratuityEntryMode = .percentage
+        input.includedGratuityPercentage = 20
+        input.serviceQuality = .poor
+        let result = try TipRecommendationEngine().calculate(input: input)
+        XCTAssertEqual(result.baseBillAmount, 100)
+        XCTAssertEqual(result.includedGratuityAmount, 20)
+        XCTAssertEqual(result.finalTotal, 128)
+    }
+}

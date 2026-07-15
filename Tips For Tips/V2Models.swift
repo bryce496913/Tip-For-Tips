@@ -292,6 +292,16 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
 
     var displayName: String { merchantName?.isEmpty == false ? merchantName! : "Receipt" }
 
+    var convertibleAmounts: [ConvertibleAmount] {
+        var values: [ConvertibleAmount] = []
+        if let subtotal { values.append(ConvertibleAmount(id: "subtotal", label: "Subtotal", amount: subtotal)) }
+        if let tax { values.append(ConvertibleAmount(id: "tax", label: "Tax", amount: tax)) }
+        if let total { values.append(ConvertibleAmount(id: "total", label: "Total", amount: total)) }
+        let included = detectedCharges.compactMap(\.amount).reduce(Decimal(0), +)
+        if included > 0 { values.append(ConvertibleAmount(id: "included-gratuity", label: "Confirmed gratuity", amount: included)) }
+        return values
+    }
+
     init(id: UUID, merchantName: String?, receiptDate: Date?, currencyCode: String = "USD", subtotal: Decimal?, tax: Decimal?, total: Decimal?, detectedCharges: [DetectedReceiptCharge], imageFilename: String?, thumbnailFilename: String?, recognizedText: String? = nil, notes: String, confirmationStatus: ReceiptConfirmationStatus = .imported, createdAt: Date, updatedAt: Date) {
         self.id = id; self.merchantName = merchantName; self.receiptDate = receiptDate; self.currencyCode = currencyCode; self.subtotal = subtotal; self.tax = tax; self.total = total; self.detectedCharges = detectedCharges; self.imageFilename = imageFilename; self.thumbnailFilename = thumbnailFilename; self.recognizedText = recognizedText; self.notes = notes; self.confirmationStatus = confirmationStatus; self.createdAt = createdAt; self.updatedAt = updatedAt
     }

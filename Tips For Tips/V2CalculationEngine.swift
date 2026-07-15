@@ -76,7 +76,14 @@ struct TipRecommendationEngine {
             if let subtotal = input.subtotal { return subtotal }
             if let enteredFinalTotal = input.finalTotal {
                 let taxIncludedInEnteredTotal = input.tax ?? 0
-                let gratuityIncludedInEnteredTotal = input.finalTotalIncludesIncludedGratuity ? includedAmount(input: input, baseAmount: enteredFinalTotal) : 0
+                if input.finalTotalIncludesIncludedGratuity, input.gratuityStatus == .yes, input.includedGratuityEntryMode == .percentage, let percentage = input.includedGratuityPercentage {
+                    let denominator = 1 + percentage / 100
+                    guard denominator > 0 else { throw TipCalculationError.invalidReceiptTotal("Enter the receipt subtotal so the included gratuity percentage can be calculated correctly.") }
+                    let derivedSubtotal = (enteredFinalTotal - taxIncludedInEnteredTotal) / denominator
+                    guard derivedSubtotal >= 0 else { throw TipCalculationError.invalidReceiptTotal("Enter the receipt subtotal so the included gratuity percentage can be calculated correctly.") }
+                    return roundedCurrency(derivedSubtotal)
+                }
+                let gratuityIncludedInEnteredTotal = input.finalTotalIncludesIncludedGratuity ? includedAmount(input: input, baseAmount: enteredFinalTotal - taxIncludedInEnteredTotal) : 0
                 let derivedSubtotal = enteredFinalTotal - taxIncludedInEnteredTotal - gratuityIncludedInEnteredTotal
                 guard derivedSubtotal >= 0 else { throw TipCalculationError.invalidReceiptTotal("The entered final total is less than the tax or included gratuity already in that total.") }
                 return derivedSubtotal
@@ -152,7 +159,14 @@ struct SplitCalculationEngine {
         switch session.roundingRule { case .exactCents: rounded = allocate(sum(pre.map(\.1)), weights: pre.map { ($0.0.id, $0.1) }); case .nearestDollar: rounded = Dictionary(uniqueKeysWithValues: pre.map { ($0.0.id, round($0.1, scale: 0, mode: .plain)) }); case .roundUpToDollar: rounded = Dictionary(uniqueKeysWithValues: pre.map { ($0.0.id, round($0.1, scale: 0, mode: .up)) }) }
         let results = pre.map { p, amount in ParticipantSplitResult(id: UUID(), participantID: p.id, participantName: p.name.isEmpty ? "Person" : p.name, baseAmount: round(bases[p.id] ?? 0), taxAmount: round(taxes[p.id] ?? 0), tipAmount: round(tips[p.id] ?? 0), roundingAdjustment: round((rounded[p.id] ?? amount) - amount), finalAmount: round(rounded[p.id] ?? amount), isPaid: p.isPaid, itemBreakdown: itemBreakdowns[p.id] ?? []) }
         let collected = sum(results.map(\.finalAmount))
-        try require(collected, equals: session.total, message: "Split allocations must preserve the full collected total.")
+        switch session.roundingRule {
+        case .exactCents:
+            try require(collected, equals: session.total, message: "Exact-cent split allocations must preserve the full collected total.")
+            try require(collected - session.total, equals: 0, message: "Exact-cent split allocations must not create a rounding difference.")
+        case .nearestDollar, .roundUpToDollar:
+            let expectedRoundedCollectedTotal = sum(rounded.values)
+            try require(collected, equals: expectedRoundedCollectedTotal, message: "Rounded split allocations must match the selected rounding rule.")
+        }
         return SplitCalculationResult(id: UUID(), sessionID: session.id, session: session, participantResults: results, originalTotal: session.total, roundedCollectedTotal: collected, roundingDifference: round(collected - session.total), unallocatedAmount: round(session.subtotal - sum(bases.values)), createdAt: now)
     }
     private func chargeAllocation(total: Decimal, mode: ChargeAllocationMode, participants: [SplitParticipant], bases: [UUID: Decimal], keyPath: KeyPath<SplitParticipant, Decimal?>, label: String) throws -> [UUID: Decimal] { switch mode { case .proportional: let weights = participants.map { ($0.id, bases[$0.id] ?? 0) }; return sum(weights.map(\.1)) == 0 && total > 0 ? allocate(total, among: participants.map(\.id)) : allocate(total, weights: weights); case .equal: return allocate(total, among: participants.map(\.id)); case .custom: let vals = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0[keyPath: keyPath] ?? 0) }); try require(sum(vals.values), equals: total, message: "Custom \(label) allocations must equal the full \(label) amount."); return vals } }

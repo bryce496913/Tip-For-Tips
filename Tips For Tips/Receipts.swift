@@ -19,95 +19,24 @@ enum ReceiptStorageError: LocalizedError {
     }
 }
 
-actor ReceiptStore {
-    private let rootURL: URL
-    private let fileManager: FileManager
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
-    private var receiptsDir: URL { rootURL.appendingPathComponent("V2/Receipts", isDirectory: true) }
-    private var imagesDir: URL { receiptsDir.appendingPathComponent("Images", isDirectory: true) }
-    private var thumbsDir: URL { receiptsDir.appendingPathComponent("Thumbnails", isDirectory: true) }
-    private var metadataURL: URL { receiptsDir.appendingPathComponent("receipts.json") }
-    private var legacyMetadataURL: URL { rootURL.appendingPathComponent("receipts.json") }
-
-    init(rootURL: URL? = nil, fileManager: FileManager = .default) { self.rootURL = rootURL ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]; self.fileManager = fileManager; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601; decoder.dateDecodingStrategy = .iso8601 }
-
-    func load() throws -> [ReceiptRecord] { try migrateLegacyIfNeeded(); guard fileManager.fileExists(atPath: metadataURL.path) else { return [] }; do { return try decoder.decode(StoredDataEnvelope<ReceiptRecord>.self, from: Data(contentsOf: metadataURL)).records.sorted { $0.updatedAt > $1.updatedAt } } catch { throw ReceiptStorageError.metadataRead } }
-    func image(for record: ReceiptRecord, thumbnail: Bool = false) throws -> UIImage { guard let imageFilename = record.imageFilename else { throw ReceiptStorageError.imageLoad }; let name = thumbnail ? (record.thumbnailFilename ?? imageFilename) : imageFilename; let url = (thumbnail ? thumbsDir : imagesDir).appendingPathComponent(name); guard let image = UIImage(contentsOfFile: url.path) else { throw ReceiptStorageError.imageLoad }; return image }
-
-    func save(image: UIImage, name: String) throws -> [ReceiptRecord] {
-        try ensureDirectories()
-        let id = UUID(); let imageName = "\(id.uuidString).jpg"; let thumbName = "\(id.uuidString)-thumb.jpg"
-        guard let fullData = image.normalizedForReceipt().resizedForReceipt(maxDimension: 1800).jpegData(compressionQuality: 0.82), let thumbData = image.normalizedForReceipt().resizedForReceipt(maxDimension: 420).jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
-        do { try fullData.write(to: imagesDir.appendingPathComponent(imageName), options: [.atomic]); try thumbData.write(to: thumbsDir.appendingPathComponent(thumbName), options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
-        var records = try load()
-        let now = Date(); records.append(ReceiptRecord(id: id, merchantName: name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: imageName, thumbnailFilename: thumbName, notes: "", createdAt: now, updatedAt: now)); try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    func save(record: ReceiptRecord, fullImage: UIImage, thumbnail: UIImage) throws -> [ReceiptRecord] {
-        try ensureDirectories()
-        let imageName = record.imageFilename ?? "\(record.id.uuidString).jpg"
-        let thumbName = record.thumbnailFilename ?? "\(record.id.uuidString)-thumb.jpg"
-        guard let fullData = fullImage.jpegData(compressionQuality: 0.82), let thumbData = thumbnail.jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
-        do { try fullData.write(to: imagesDir.appendingPathComponent(imageName), options: [.atomic]); try thumbData.write(to: thumbsDir.appendingPathComponent(thumbName), options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
-        do { var records = try load(); records.removeAll { $0.id == record.id }; records.insert(record, at: 0); try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt } }
-        catch { try? fileManager.removeItem(at: imagesDir.appendingPathComponent(imageName)); try? fileManager.removeItem(at: thumbsDir.appendingPathComponent(thumbName)); throw ReceiptStorageError.metadataWrite }
-    }
-
-    func rename(_ record: ReceiptRecord, to newName: String) throws -> [ReceiptRecord] { var records = try load(); guard let index = records.firstIndex(where: { $0.id == record.id }) else { return records }; records[index].merchantName = newName; records[index].updatedAt = Date(); do { try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt } } catch { throw ReceiptStorageError.rename } }
-    func delete(_ record: ReceiptRecord) throws -> [ReceiptRecord] { var records = try load(); guard records.contains(where: { $0.id == record.id }) else { return records }; do { let staged = try stageFilesForDeletion(record); records.removeAll { $0.id == record.id }; do { try saveMetadata(records); for url in staged { if fileManager.fileExists(atPath: url.path) { try? fileManager.removeItem(at: url) } }; return records } catch { try restore(stagedFiles: staged); throw error } } catch { throw ReceiptStorageError.delete } }
-
-    private var temporaryDir: URL { receiptsDir.appendingPathComponent("Temporary", isDirectory: true) }
-    private func ensureDirectories() throws { do { try fileManager.createDirectory(at: imagesDir, withIntermediateDirectories: true); try fileManager.createDirectory(at: thumbsDir, withIntermediateDirectories: true); try fileManager.createDirectory(at: temporaryDir, withIntermediateDirectories: true) } catch { throw ReceiptStorageError.directory } }
-    private func saveMetadata(_ records: [ReceiptRecord]) throws { do { try ensureDirectories(); let data = try encoder.encode(StoredDataEnvelope(version: 1, records: records)); try data.write(to: metadataURL, options: [.atomic]) } catch { throw ReceiptStorageError.metadataWrite } }
-
-    private func stageFilesForDeletion(_ record: ReceiptRecord) throws -> [URL] {
-        var staged: [URL] = []
-        for (filename, dir) in [(record.imageFilename, imagesDir), (record.thumbnailFilename, thumbsDir)] {
-            guard let filename else { continue }
-            let source = try validatedURL(filename: filename, in: dir)
-            guard fileManager.fileExists(atPath: source.path) else { continue }
-            let destination = temporaryDir.appendingPathComponent("delete-\(UUID().uuidString)-\(source.lastPathComponent)")
-            try fileManager.moveItem(at: source, to: destination)
-            staged.append(destination)
-        }
-        return staged
-    }
-    private func restore(stagedFiles: [URL]) throws { for staged in stagedFiles { let name = staged.lastPathComponent.components(separatedBy: "-").dropFirst(2).joined(separator: "-"); let targetDir = name.contains("-thumb") ? thumbsDir : imagesDir; try? fileManager.moveItem(at: staged, to: targetDir.appendingPathComponent(name)) } }
-    private func validatedURL(filename: String, in directory: URL) throws -> URL {
-        let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed == (trimmed as NSString).lastPathComponent, !trimmed.contains(".."), !trimmed.hasPrefix("/") else { throw ReceiptStorageError.invalidImageFilename }
-        let dir = directory.standardizedFileURL.resolvingSymlinksInPath()
-        let url = dir.appendingPathComponent(trimmed).standardizedFileURL.resolvingSymlinksInPath()
-        guard url.path.hasPrefix(dir.path + "/"), url.deletingLastPathComponent().path == dir.path else { throw ReceiptStorageError.invalidImageFilename }
-        return url
-    }
-
-    /// Migrates old root receipts.json records with embedded image Data into JPEG files, then writes metadata.
-    /// The old JSON is moved to receipts.json.legacy after the new metadata is saved, making migration idempotent.
-    private func migrateLegacyIfNeeded() throws {
-        guard !fileManager.fileExists(atPath: metadataURL.path), fileManager.fileExists(atPath: legacyMetadataURL.path) else { return }
-        struct LegacyReceipt: Codable { var id: UUID?; var imageData: Data; var name: String }
-        do {
-            let legacy = try decoder.decode([LegacyReceipt].self, from: Data(contentsOf: legacyMetadataURL))
-            try ensureDirectories()
-            var records: [ReceiptRecord] = []
-            for item in legacy { guard let image = UIImage(data: item.imageData), let full = image.normalizedForReceipt().resizedForReceipt(maxDimension: 1800).jpegData(compressionQuality: 0.82), let thumb = image.normalizedForReceipt().resizedForReceipt(maxDimension: 420).jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }; let id = item.id ?? UUID(); let imageName = "\(id.uuidString).jpg"; let thumbName = "\(id.uuidString)-thumb.jpg"; try full.write(to: imagesDir.appendingPathComponent(imageName), options: [.atomic]); try thumb.write(to: thumbsDir.appendingPathComponent(thumbName), options: [.atomic]); let now = Date(); records.append(ReceiptRecord(id: id, merchantName: item.name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: imageName, thumbnailFilename: thumbName, notes: "", createdAt: now, updatedAt: now)) }
-            try saveMetadata(records)
-            try fileManager.moveItem(at: legacyMetadataURL, to: rootURL.appendingPathComponent("receipts.json.legacy"))
-        } catch { throw ReceiptStorageError.metadataRead }
-    }
-}
-
 @MainActor final class ReceiptsViewModel: ObservableObject {
     @Published var records: [ReceiptRecord] = []
     @Published var errorMessage: String?
-    private let store = ReceiptStore()
-    func load() { Task { do { records = try await store.load() } catch { errorMessage = error.localizedDescription } } }
-    func save(image: UIImage?, name: String) { guard let image, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }; Task { do { records = try await store.save(image: image, name: name.trimmingCharacters(in: .whitespacesAndNewlines)) } catch { errorMessage = error.localizedDescription } } }
-    func image(for record: ReceiptRecord, thumbnail: Bool = false) async -> UIImage { (try? await store.image(for: record, thumbnail: thumbnail)) ?? UIImage() }
-    func rename(_ record: ReceiptRecord, to name: String) { Task { do { records = try await store.rename(record, to: name) } catch { errorMessage = error.localizedDescription } } }
-    func delete(_ record: ReceiptRecord) { Task { do { records = try await store.delete(record) } catch { errorMessage = error.localizedDescription } } }
+    private let repository: FileReceiptRepository = FileReceiptRepository()
+    func load() { Task { do { records = try await repository.fetchReceipts() } catch { errorMessage = error.localizedDescription } } }
+    func save(image: UIImage?, name: String) { guard let image, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }; Task { do { records = try await saveReceiptImage(image, name: name.trimmingCharacters(in: .whitespacesAndNewlines)) } catch { errorMessage = error.localizedDescription } } }
+    func image(for record: ReceiptRecord, thumbnail: Bool = false) async -> UIImage { (try? await (thumbnail ? repository.loadThumbnail(filename: record.thumbnailFilename ?? record.imageFilename ?? "") : repository.loadImage(filename: record.imageFilename ?? ""))) ?? UIImage() }
+    func rename(_ record: ReceiptRecord, to name: String) { Task { do { _ = try await repository.rename(receiptID: record.id, newName: name); records = try await repository.fetchReceipts() } catch { errorMessage = error.localizedDescription } } }
+    func delete(_ record: ReceiptRecord) { Task { do { try await repository.deleteReceipt(id: record.id); records = try await repository.fetchReceipts() } catch { errorMessage = error.localizedDescription } } }
+    private func saveReceiptImage(_ image: UIImage, name: String) async throws -> [ReceiptRecord] {
+        let id = UUID()
+        let now = Date()
+        let full = image.normalizedForReceipt().resizedForReceipt(maxDimension: 1800)
+        let thumb = image.normalizedForReceipt().resizedForReceipt(maxDimension: 420)
+        let record = ReceiptRecord(id: id, merchantName: name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: "\(id.uuidString).jpg", thumbnailFilename: "\(id.uuidString)-thumb.jpg", notes: "", createdAt: now, updatedAt: now)
+        _ = try await repository.create(draft: record, fullImage: full, thumbnail: thumb)
+        return try await repository.fetchReceipts()
+    }
 }
 
 struct Receipts: View {

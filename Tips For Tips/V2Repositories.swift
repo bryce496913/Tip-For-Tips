@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 protocol CalculationRepository {
     func fetchCalculations() async throws -> [SavedCalculationRecord]
@@ -6,10 +7,16 @@ protocol CalculationRepository {
     func deleteCalculation(id: UUID) async throws
 }
 
-protocol ReceiptRepository {
+protocol ReceiptRepository: Sendable {
     func fetchReceipts() async throws -> [ReceiptRecord]
+    func receipt(id: UUID) async throws -> ReceiptRecord?
+    func create(draft: ReceiptRecord, fullImage: UIImage, thumbnail: UIImage) async throws -> ReceiptRecord
     func saveReceipt(_ receipt: ReceiptRecord) async throws
+    func replaceImage(receiptID: UUID, image: UIImage) async throws -> ReceiptRecord
+    func rename(receiptID: UUID, newName: String) async throws -> ReceiptRecord
     func deleteReceipt(id: UUID) async throws
+    func loadImage(filename: String) async throws -> UIImage
+    func loadThumbnail(filename: String) async throws -> UIImage
 }
 
 protocol UserPreferencesRepository {
@@ -198,15 +205,47 @@ actor FileReceiptRepository: ReceiptRepository {
     }
 
     func fetchReceipts() async throws -> [ReceiptRecord] { try loadRecords() }
-    func saveReceipt(_ receipt: ReceiptRecord) async throws { var records = try loadRecords(); records.removeAll { $0.id == receipt.id }; records.insert(receipt, at: 0); try writeRecordsAtomically(records) }
+    func receipt(id: UUID) async throws -> ReceiptRecord? { try loadRecords().first { $0.id == id } }
+    func create(draft: ReceiptRecord, fullImage: UIImage, thumbnail: UIImage) async throws -> ReceiptRecord {
+        try ensureDirectories()
+        let imageName = draft.imageFilename ?? "\(draft.id.uuidString).jpg"
+        let thumbName = draft.thumbnailFilename ?? "\(draft.id.uuidString)-thumb.jpg"
+        guard let fullData = fullImage.jpegData(compressionQuality: 0.82), let thumbData = thumbnail.jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
+        let imageURL = try validatedURL(filename: imageName, in: imagesDir)
+        let thumbURL = try validatedURL(filename: thumbName, in: thumbsDir)
+        do { try fullData.write(to: imageURL, options: [.atomic]); try thumbData.write(to: thumbURL, options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
+        var record = draft; record.imageFilename = imageName; record.thumbnailFilename = thumbName
+        do { try saveReceipt(record); return record } catch { try? fileManager.removeItem(at: imageURL); try? fileManager.removeItem(at: thumbURL); throw error }
+    }
+    func saveReceipt(_ receipt: ReceiptRecord) async throws { try saveReceipt(receipt) }
+    private func saveReceipt(_ receipt: ReceiptRecord) throws { var records = try loadRecords(); records.removeAll { $0.id == receipt.id }; records.insert(receipt, at: 0); try writeRecordsAtomically(records) }
     func deleteReceipt(id: UUID) async throws {
         var records = try loadRecords()
         guard let receipt = records.first(where: { $0.id == id }) else { return }
         let staged = try stageFilesForDeletion(receipt)
         records.removeAll { $0.id == id }
-        do { try writeRecordsAtomically(records); try staged.forEach { if fileManager.fileExists(atPath: $0.path) { try fileManager.removeItem(at: $0) } } }
+        do { try writeRecordsAtomically(records); try staged.forEach { if fileManager.fileExists(atPath: $0.temporaryURL.path) { try fileManager.removeItem(at: $0.temporaryURL) } } }
         catch { try restore(stagedFiles: staged); throw error }
     }
+
+    func replaceImage(receiptID: UUID, image: UIImage) async throws -> ReceiptRecord {
+        guard var record = try loadRecords().first(where: { $0.id == receiptID }) else { throw ReceiptStorageError.metadataRead }
+        let processed = image.normalizedForReceipt()
+        let imageName = record.imageFilename ?? "\(receiptID.uuidString).jpg"
+        let thumbName = record.thumbnailFilename ?? "\(receiptID.uuidString)-thumb.jpg"
+        guard let fullData = processed.resizedForReceipt(maxDimension: 1800).jpegData(compressionQuality: 0.82), let thumbData = processed.resizedForReceipt(maxDimension: 420).jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
+        try fullData.write(to: validatedURL(filename: imageName, in: imagesDir), options: [.atomic])
+        try thumbData.write(to: validatedURL(filename: thumbName, in: thumbsDir), options: [.atomic])
+        record.imageFilename = imageName; record.thumbnailFilename = thumbName; record.updatedAt = Date()
+        try saveReceipt(record)
+        return record
+    }
+    func rename(receiptID: UUID, newName: String) async throws -> ReceiptRecord {
+        var records = try loadRecords(); guard let index = records.firstIndex(where: { $0.id == receiptID }) else { throw ReceiptStorageError.metadataRead }
+        records[index].merchantName = newName; records[index].updatedAt = Date(); try writeRecordsAtomically(records); return records[index]
+    }
+    func loadImage(filename: String) async throws -> UIImage { guard let image = UIImage(contentsOfFile: (try validatedURL(filename: filename, in: imagesDir)).path) else { throw ReceiptStorageError.imageLoad }; return image }
+    func loadThumbnail(filename: String) async throws -> UIImage { guard let image = UIImage(contentsOfFile: (try validatedURL(filename: filename, in: thumbsDir)).path) else { throw ReceiptStorageError.imageLoad }; return image }
 
     func imageURL(for record: ReceiptRecord, thumbnail: Bool = false) throws -> URL {
         if thumbnail, let thumb = record.thumbnailFilename { return try validatedURL(filename: thumb, in: thumbsDir) }
@@ -218,7 +257,7 @@ actor FileReceiptRepository: ReceiptRepository {
     private func loadRecords() throws -> [ReceiptRecord] {
         try ensureDirectories()
         guard fileManager.fileExists(atPath: metadataURL.path) else { return [] }
-        do { return try decoder.decode(StoredDataEnvelope<ReceiptRecord>.self, from: Data(contentsOf: metadataURL)).records.sorted { $0.updatedAt > $1.updatedAt } }
+        do { let envelope = try decoder.decode(StoredDataEnvelope<ReceiptRecord>.self, from: Data(contentsOf: metadataURL)); guard envelope.version == V2MigrationCoordinator.currentVersion else { throw ReceiptStorageError.metadataRead }; return envelope.records.sorted { $0.updatedAt > $1.updatedAt } }
         catch { try backupCorruptMetadataIfNeeded(); throw ReceiptStorageError.metadataRead }
     }
     private func backupCorruptMetadataIfNeeded() throws {
@@ -243,20 +282,29 @@ actor FileReceiptRepository: ReceiptRepository {
             if fileManager.fileExists(atPath: metadataURL.path) { _ = try fileManager.replaceItemAt(metadataURL, withItemAt: tempURL, backupItemName: nil, options: [.usingNewMetadataOnly]) } else { try fileManager.moveItem(at: tempURL, to: metadataURL) }
         } catch { try? fileManager.removeItem(at: tempURL); throw ReceiptStorageError.metadataWrite }
     }
-    private func stageFilesForDeletion(_ record: ReceiptRecord) throws -> [URL] {
+    private struct StagedReceiptFile: Sendable { let originalURL: URL; let temporaryURL: URL }
+    private func stageFilesForDeletion(_ record: ReceiptRecord) throws -> [StagedReceiptFile] {
         try ensureDirectories()
-        var staged: [URL] = []
-        for (filename, dir) in [(record.imageFilename, imagesDir), (record.thumbnailFilename, thumbsDir)] {
-            guard let filename else { continue }
-            let source = try validatedURL(filename: filename, in: dir)
-            guard fileManager.fileExists(atPath: source.path) else { continue }
-            let destination = temporaryDir.appendingPathComponent("delete-\(UUID().uuidString)-\(source.lastPathComponent)")
-            try fileManager.moveItem(at: source, to: destination)
-            staged.append(destination)
-        }
-        return staged
+        var staged: [StagedReceiptFile] = []
+        do {
+            for (filename, dir) in [(record.imageFilename, imagesDir), (record.thumbnailFilename, thumbsDir)] {
+                guard let filename else { continue }
+                let source = try validatedURL(filename: filename, in: dir)
+                guard fileManager.fileExists(atPath: source.path) else { continue }
+                let destination = temporaryDir.appendingPathComponent("delete-\(UUID().uuidString)-\(source.lastPathComponent)")
+                try fileManager.moveItem(at: source, to: destination)
+                staged.append(StagedReceiptFile(originalURL: source, temporaryURL: destination))
+            }
+            return staged
+        } catch { try? restore(stagedFiles: staged); throw error }
     }
-    private func restore(stagedFiles: [URL]) throws { for staged in stagedFiles { let name = staged.lastPathComponent.components(separatedBy: "-").dropFirst(2).joined(separator: "-"); let targetDir = name.contains("-thumb") ? thumbsDir : imagesDir; let target = targetDir.appendingPathComponent(name); if fileManager.fileExists(atPath: staged.path) { try? fileManager.moveItem(at: staged, to: target) } } }
+    private func restore(stagedFiles: [StagedReceiptFile]) throws {
+        var failures: [Error] = []
+        for staged in stagedFiles where fileManager.fileExists(atPath: staged.temporaryURL.path) {
+            do { try fileManager.moveItem(at: staged.temporaryURL, to: staged.originalURL) } catch { failures.append(error) }
+        }
+        if !failures.isEmpty { throw ReceiptStorageError.delete }
+    }
     private func validatedURL(filename: String, in directory: URL) throws -> URL {
         let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed == (trimmed as NSString).lastPathComponent, !trimmed.contains(".."), !trimmed.hasPrefix("/") else { throw ReceiptStorageError.invalidImageFilename }
