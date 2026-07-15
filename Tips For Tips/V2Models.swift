@@ -303,53 +303,113 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
     }
 }
 
+struct SplitCalculatorContext: Hashable, Codable {
+    var sourceCalculationID: UUID?
+    var receiptID: UUID?
+    var currencyCode: String
+    var subtotal: Decimal?
+    var tax: Decimal?
+    var tipAmount: Decimal?
+    var total: Decimal?
+    var suggestedPeopleCount: Int?
+
+    static let manual = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: nil, tax: nil, tipAmount: nil, total: nil, suggestedPeopleCount: nil)
+
+    static func tipResult(_ result: TipCalculationResult, sourceCalculationID: UUID? = nil) -> SplitCalculatorContext {
+        SplitCalculatorContext(sourceCalculationID: sourceCalculationID ?? result.id, receiptID: nil, currencyCode: result.input.currencyCode, subtotal: result.input.subtotal ?? result.baseBillAmount, tax: result.input.tax, tipAmount: result.suggestedAdditionalTip, total: result.finalTotal, suggestedPeopleCount: result.input.peopleCount)
+    }
+
+    static func receipt(_ receipt: ReceiptRecord) -> SplitCalculatorContext {
+        let included = receipt.detectedCharges.filter { [.includedGratuity, .automaticGratuity].contains($0.kind) || $0.userClassification == .includedGratuity }.compactMap(\.amount).reduce(Decimal(0), +)
+        return SplitCalculatorContext(sourceCalculationID: nil, receiptID: receipt.id, currencyCode: receipt.currencyCode, subtotal: receipt.subtotal, tax: receipt.tax, tipAmount: included == 0 ? nil : included, total: receipt.total, suggestedPeopleCount: nil)
+    }
+}
+
+enum SplitMode: String, CaseIterable, Identifiable, Codable, Hashable {
+    case equal, customAmount, percentage, itemized
+    var id: String { rawValue }
+    var title: String { switch self { case .equal: return "Equal Split"; case .customAmount: return "Custom Amount"; case .percentage: return "Percentage"; case .itemized: return "Itemized" } }
+}
+
+enum ChargeAllocationMode: String, CaseIterable, Identifiable, Codable, Hashable {
+    case proportional, equal, custom
+    var id: String { rawValue }
+    var title: String { switch self { case .proportional: return "Proportional"; case .equal: return "Equal"; case .custom: return "Custom" } }
+}
+
+enum SplitRoundingRule: String, CaseIterable, Identifiable, Codable, Hashable {
+    case exactCents, nearestDollar, roundUpToDollar
+    var id: String { rawValue }
+    var title: String { switch self { case .exactCents: return "Exact cents"; case .nearestDollar: return "Nearest dollar"; case .roundUpToDollar: return "Round up" } }
+    init(preference: RoundingPreference) { switch preference { case .exactCents: self = .exactCents; case .roundEachPaymentUpToDollar: self = .roundUpToDollar; case .roundToNearestDollar: self = .nearestDollar } }
+}
+
 struct SplitParticipant: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var percentage: Decimal?
     var customAmount: Decimal?
+    var customTaxAmount: Decimal?
+    var customTipAmount: Decimal?
     var isPaid: Bool
+
+    init(id: UUID = UUID(), name: String, percentage: Decimal? = nil, customAmount: Decimal? = nil, customTaxAmount: Decimal? = nil, customTipAmount: Decimal? = nil, isPaid: Bool = false) {
+        self.id = id; self.name = name; self.percentage = percentage; self.customAmount = customAmount; self.customTaxAmount = customTaxAmount; self.customTipAmount = customTipAmount; self.isPaid = isPaid
+    }
 }
 
-enum SplitItemSharingRule: String, Codable, Hashable { case assigned, sharedBySelected, sharedByEveryone }
+struct SplitItemAssignment: Identifiable, Codable, Hashable {
+    let id: UUID
+    let participantID: UUID
+    var share: Decimal
+    init(id: UUID = UUID(), participantID: UUID, share: Decimal) { self.id = id; self.participantID = participantID; self.share = share }
+}
+
+enum SplitItemSharingRule: String, Codable, Hashable { case assigned, sharedBySelected, sharedByEveryone, customShares }
 
 struct SplitItem: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var price: Decimal
-    var assignedParticipantIDs: Set<UUID>
+    var assignments: [SplitItemAssignment]
     var sharingRule: SplitItemSharingRule
+    init(id: UUID = UUID(), name: String, price: Decimal = 0, assignments: [SplitItemAssignment] = [], sharingRule: SplitItemSharingRule = .assigned) {
+        self.id = id; self.name = name; self.price = price; self.assignments = assignments; self.sharingRule = sharingRule
+    }
 }
 
-enum SplitMode: String, Codable, Hashable { case equal, customAmount, percentage, itemized }
-enum SplitTaxAllocation: String, Codable, Hashable { case proportionalToSubtotal, equal, custom }
-enum SplitTipAllocation: String, Codable, Hashable { case proportionalToSubtotal, equal, custom }
-
-struct SplitPaymentBreakdown: Identifiable, Codable, Hashable {
-    var id: UUID { participantID }
-    var participantID: UUID
-    var itemSubtotal: Decimal
-    var taxShare: Decimal
-    var tipShare: Decimal
-    var roundingAdjustment: Decimal
-    var finalAmount: Decimal
-    var isPaid: Bool
+struct SplitSession: Identifiable, Codable, Hashable {
+    let id: UUID
+    var name: String
+    var mode: SplitMode
+    var currencyCode: String
+    var subtotal: Decimal
+    var tax: Decimal
+    var tipAmount: Decimal
+    var total: Decimal
+    var participants: [SplitParticipant]
+    var items: [SplitItem]
+    var taxAllocationMode: ChargeAllocationMode
+    var tipAllocationMode: ChargeAllocationMode
+    var roundingRule: SplitRoundingRule
+    var sourceCalculationID: UUID?
+    var receiptID: UUID?
+    let createdAt: Date
+    var updatedAt: Date
 }
+
+struct ParticipantItemBreakdown: Identifiable, Codable, Hashable { let id: UUID; let itemID: UUID; let itemName: String; let amount: Decimal }
+struct ParticipantSplitResult: Identifiable, Codable, Hashable { let id: UUID; let participantID: UUID; let participantName: String; let baseAmount: Decimal; let taxAmount: Decimal; let tipAmount: Decimal; let roundingAdjustment: Decimal; let finalAmount: Decimal; let isPaid: Bool; let itemBreakdown: [ParticipantItemBreakdown] }
 
 struct SplitCalculationResult: Identifiable, Codable, Hashable {
     let id: UUID
-    var mode: SplitMode
-    var participants: [SplitParticipant]
-    var items: [SplitItem]
-    var taxAmount: Decimal
-    var tipAmount: Decimal
-    var taxAllocation: SplitTaxAllocation
-    var tipAllocation: SplitTipAllocation
-    var roundingPreference: RoundingPreference
-    var originalTotal: Decimal
-    var roundedCollectedTotal: Decimal
-    var difference: Decimal
-    var breakdowns: [SplitPaymentBreakdown]
+    let sessionID: UUID
+    let session: SplitSession
+    let participantResults: [ParticipantSplitResult]
+    let originalTotal: Decimal
+    let roundedCollectedTotal: Decimal
+    let roundingDifference: Decimal
+    let unallocatedAmount: Decimal
     let createdAt: Date
 }
 

@@ -81,3 +81,56 @@ struct TipRecommendationEngine {
 }
 
 enum LocalizedDecimalParser { static func parse(_ text: String, locale: Locale = .current) -> Decimal? { let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.locale = locale; if let number = formatter.number(from: text) { return number.decimalValue }; let normalized = text.replacingOccurrences(of: ",", with: "."); return Decimal(string: normalized) } }
+
+// MARK: - V2 Phase 4 Split Calculation
+
+enum SplitCalculationError: LocalizedError, Equatable {
+    case invalidBill(String), noParticipants, negativeAmount(String), allocationMismatch(String), unassignedItem(String), invalidShare(String), danglingParticipant
+    var errorDescription: String? { switch self { case .invalidBill(let m), .negativeAmount(let m), .allocationMismatch(let m), .unassignedItem(let m), .invalidShare(let m): return m; case .noParticipants: return "Add at least one participant."; case .danglingParticipant: return "This split contains an item assignment for a deleted participant." } }
+}
+
+struct SplitCalculationEngine {
+    func calculate(session: SplitSession, now: Date = Date()) throws -> SplitCalculationResult {
+        guard !session.participants.isEmpty else { throw SplitCalculationError.noParticipants }
+        guard session.subtotal >= 0, session.tax >= 0, session.tipAmount >= 0, session.total >= 0 else { throw SplitCalculationError.invalidBill("Bill, tax, tip and total must be zero or positive.") }
+        let ids = Set(session.participants.map(\.id))
+        var bases = Dictionary(uniqueKeysWithValues: session.participants.map { ($0.id, Decimal(0)) })
+        var itemBreakdowns = Dictionary(uniqueKeysWithValues: session.participants.map { ($0.id, [ParticipantItemBreakdown]()) })
+        switch session.mode {
+        case .equal:
+            bases = allocate(session.total - session.tax - session.tipAmount, among: session.participants.map(\.id))
+        case .customAmount:
+            for p in session.participants { guard (p.customAmount ?? 0) >= 0 else { throw SplitCalculationError.negativeAmount("Custom amounts cannot be negative.") }; bases[p.id] = p.customAmount ?? 0 }
+            try require(sum(bases.values), equals: session.subtotal, message: "Custom amounts must equal the subtotal before tax and tip.")
+        case .percentage:
+            let percentTotal = session.participants.reduce(Decimal(0)) { $0 + ($1.percentage ?? 0) }
+            for p in session.participants { guard (p.percentage ?? 0) >= 0 else { throw SplitCalculationError.negativeAmount("Percentages cannot be negative.") }; bases[p.id] = session.subtotal * (p.percentage ?? 0) / 100 }
+            try require(percentTotal, equals: 100, message: "Percentages must total 100%.")
+        case .itemized:
+            for item in session.items {
+                guard item.price >= 0 else { throw SplitCalculationError.negativeAmount("Item prices cannot be negative.") }
+                guard !item.assignments.isEmpty || item.price == 0 else { throw SplitCalculationError.unassignedItem("Assign \(item.name.isEmpty ? "each item" : item.name) to at least one participant.") }
+                let shareTotal = item.assignments.reduce(Decimal(0)) { $0 + $1.share }
+                guard shareTotal == 0 || absDecimal(shareTotal - 1) <= Decimal(string: "0.0001")! else { throw SplitCalculationError.invalidShare("Item shares must total 100%.") }
+                for a in item.assignments { guard ids.contains(a.participantID) else { throw SplitCalculationError.danglingParticipant }; guard a.share >= 0 else { throw SplitCalculationError.negativeAmount("Item shares cannot be negative.") }; let amount = item.price * a.share; bases[a.participantID, default: 0] += amount; itemBreakdowns[a.participantID, default: []].append(ParticipantItemBreakdown(id: UUID(), itemID: item.id, itemName: item.name.isEmpty ? "Item" : item.name, amount: amount)) }
+            }
+            try require(sum(bases.values), equals: session.subtotal, message: "Item totals must match the receipt subtotal before continuing.")
+        }
+        let taxes = try chargeAllocation(total: session.tax, mode: session.taxAllocationMode, participants: session.participants, bases: bases, keyPath: \.customTaxAmount, label: "tax")
+        let tips = try chargeAllocation(total: session.tipAmount, mode: session.tipAllocationMode, participants: session.participants, bases: bases, keyPath: \.customTipAmount, label: "tip")
+        let pre = session.participants.map { p in (p, (bases[p.id] ?? 0) + (taxes[p.id] ?? 0) + (tips[p.id] ?? 0)) }
+        let rounded: [UUID: Decimal]
+        switch session.roundingRule { case .exactCents: rounded = allocate(sum(pre.map(\.1)), weights: pre.map { ($0.0.id, $0.1) }); case .nearestDollar: rounded = Dictionary(uniqueKeysWithValues: pre.map { ($0.0.id, round($0.1, scale: 0, mode: .plain)) }); case .roundUpToDollar: rounded = Dictionary(uniqueKeysWithValues: pre.map { ($0.0.id, round($0.1, scale: 0, mode: .up)) }) }
+        let results = pre.map { p, amount in ParticipantSplitResult(id: UUID(), participantID: p.id, participantName: p.name.isEmpty ? "Person" : p.name, baseAmount: round(bases[p.id] ?? 0), taxAmount: round(taxes[p.id] ?? 0), tipAmount: round(tips[p.id] ?? 0), roundingAdjustment: round((rounded[p.id] ?? amount) - amount), finalAmount: round(rounded[p.id] ?? amount), isPaid: p.isPaid, itemBreakdown: itemBreakdowns[p.id] ?? []) }
+        let collected = sum(results.map(\.finalAmount))
+        return SplitCalculationResult(id: UUID(), sessionID: session.id, session: session, participantResults: results, originalTotal: session.total, roundedCollectedTotal: collected, roundingDifference: round(collected - session.total), unallocatedAmount: round(session.subtotal - sum(bases.values)), createdAt: now)
+    }
+    private func chargeAllocation(total: Decimal, mode: ChargeAllocationMode, participants: [SplitParticipant], bases: [UUID: Decimal], keyPath: KeyPath<SplitParticipant, Decimal?>, label: String) throws -> [UUID: Decimal] { switch mode { case .proportional: return allocate(total, weights: participants.map { ($0.id, bases[$0.id] ?? 0) }); case .equal: return allocate(total, among: participants.map(\.id)); case .custom: let vals = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0[keyPath: keyPath] ?? 0) }); try require(sum(vals.values), equals: total, message: "Custom \(label) allocations must equal the full \(label) amount."); return vals } }
+    private func allocate(_ total: Decimal, among ids: [UUID]) -> [UUID: Decimal] { allocate(total, weights: ids.map { ($0, 1) }) }
+    private func allocate(_ total: Decimal, weights: [(UUID, Decimal)]) -> [UUID: Decimal] { let totalCents = cents(total); let weightSum = sum(weights.map(\.1)); guard weightSum > 0, !weights.isEmpty else { return Dictionary(uniqueKeysWithValues: weights.map { ($0.0, 0) }) }; var result: [UUID: Int] = [:]; var remainders: [(UUID, Decimal)] = []; var used = 0; for (id,w) in weights { let exact = Decimal(totalCents) * w / weightSum; let floorCents = NSDecimalNumber(decimal: exact).rounding(accordingToBehavior: NSDecimalNumberHandler(roundingMode: .down, scale: 0, raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false)).intValue; result[id] = floorCents; used += floorCents; remainders.append((id, exact - Decimal(floorCents))) }; for (id,_) in remainders.sorted(by: { $0.1 == $1.1 ? $0.0.uuidString < $1.0.uuidString : $0.1 > $1.1 }).prefix(max(0,totalCents-used)) { result[id, default: 0] += 1 }; return Dictionary(uniqueKeysWithValues: result.map { ($0.key, Decimal($0.value) / 100) }) }
+    private func cents(_ d: Decimal) -> Int { NSDecimalNumber(decimal: round(d)).multiplying(byPowerOf10: 2).intValue }
+    private func round(_ v: Decimal, scale: Int = 2, mode: NSDecimalNumber.RoundingMode = .plain) -> Decimal { var value = v; var r = Decimal(); NSDecimalRound(&r, &value, scale, mode); return r }
+    private func sum<S: Sequence>(_ values: S) -> Decimal where S.Element == Decimal { values.reduce(0,+) }
+    private func require(_ lhs: Decimal, equals rhs: Decimal, message: String) throws { if absDecimal(lhs-rhs) > Decimal(string: "0.01")! { throw SplitCalculationError.allocationMismatch(message) } }
+    private func absDecimal(_ d: Decimal) -> Decimal { d < 0 ? -d : d }
+}

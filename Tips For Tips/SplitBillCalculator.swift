@@ -1,31 +1,61 @@
 import SwiftUI
 
-struct SplitBillCalculator: View {
-    @State private var showEvenSplitSheet = false
-    @State private var showCustomSplitSheet = false
+@MainActor
+final class SplitBillViewModel: ObservableObject {
+    @Published var session: SplitSession
+    @Published var result: SplitCalculationResult?
+    @Published var validationMessage: String?
+    @Published var saveMessage: String?
+    private let engine = SplitCalculationEngine()
+    private let repository: CalculationRepository
 
-    var body: some View {
-        AppScreen {
-            VStack(spacing: 24) {
-                Image("SplitBillCalculator")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 190, height: 190)
-                    .accessibilityHidden(true)
-                ScreenTitle(text: "Split Bill Calculator")
-                ThemedCard {
-                    PrimaryButton(title: "Even Split") { showEvenSplitSheet = true }
-                    SecondaryButton(title: "Custom Split") { showCustomSplitSheet = true }
-                }
-                Spacer()
-            }
-            .padding(20)
-        }
-        .navigationTitle("Split Bill")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showEvenSplitSheet) { EvenSplitView() }
-        .sheet(isPresented: $showCustomSplitSheet) { CustomSplitView() }
+    init(context: SplitCalculatorContext = .manual, preferences: UserPreferences = .defaults, repository: CalculationRepository = FileCalculationRepository()) {
+        self.repository = repository
+        let count = max(1, context.suggestedPeopleCount ?? preferences.defaultPeopleCount)
+        let subtotal = context.subtotal ?? max(0, (context.total ?? 0) - (context.tax ?? 0) - (context.tipAmount ?? 0))
+        session = SplitSession(id: UUID(), name: "Bill Split", mode: .equal, currencyCode: context.currencyCode, subtotal: subtotal, tax: context.tax ?? 0, tipAmount: context.tipAmount ?? 0, total: context.total ?? subtotal + (context.tax ?? 0) + (context.tipAmount ?? 0), participants: (1...count).map { SplitParticipant(name: "Person \($0)") }, items: [SplitItem(name: "Item", price: subtotal)], taxAllocationMode: .proportional, tipAllocationMode: .proportional, roundingRule: SplitRoundingRule(preference: preferences.roundingPreference), sourceCalculationID: context.sourceCalculationID, receiptID: context.receiptID, createdAt: Date(), updatedAt: Date())
+        recalculate()
     }
+
+    func recalculate() { do { session.updatedAt = Date(); result = try engine.calculate(session: session); validationMessage = nil } catch { result = nil; validationMessage = error.localizedDescription } }
+    func setMode(_ mode: SplitMode) { session.mode = mode; if mode == .percentage { splitEvenlyPercentages() }; recalculate() }
+    func addParticipant() { session.participants.append(SplitParticipant(name: "Person \(session.participants.count + 1)")); if session.mode == .percentage { splitEvenlyPercentages() }; recalculate() }
+    func deleteParticipant(_ id: UUID) { guard session.participants.count > 1 else { validationMessage = "Keep at least one participant."; return }; session.participants.removeAll { $0.id == id }; session.items = session.items.map { item in var i = item; i.assignments.removeAll { $0.participantID == id }; return i }; if session.mode == .percentage { splitEvenlyPercentages() }; recalculate() }
+    func mark(_ id: UUID, paid: Bool) { guard let i = session.participants.firstIndex(where: { $0.id == id }) else { return }; session.participants[i].isPaid = paid; recalculate() }
+    func markAllPaid() { for i in session.participants.indices { session.participants[i].isPaid = true }; recalculate() }
+    func resetPaid() { for i in session.participants.indices { session.participants[i].isPaid = false }; recalculate() }
+    func assignRemaining(to id: UUID) { let assigned = session.participants.reduce(Decimal(0)) { $0 + ($1.customAmount ?? 0) }; if let i = session.participants.firstIndex(where: { $0.id == id }) { session.participants[i].customAmount = max(0, session.subtotal - assigned + (session.participants[i].customAmount ?? 0)) }; recalculate() }
+    func splitEvenlyPercentages() { let ids = session.participants.map(\.id); let allocations = SplitCalculationEngine().calculatePercentForUI(count: ids.count); for i in session.participants.indices { session.participants[i].percentage = allocations[i] } }
+    func addItem() { session.items.append(SplitItem(name: "Item", price: 0)); recalculate() }
+    func deleteItem(_ id: UUID) { session.items.removeAll { $0.id == id }; if session.items.isEmpty { addItem() }; recalculate() }
+    func shareItemWithEveryone(_ itemID: UUID) { guard let i = session.items.firstIndex(where: { $0.id == itemID }), !session.participants.isEmpty else { return }; let share = Decimal(1) / Decimal(session.participants.count); session.items[i].assignments = session.participants.map { SplitItemAssignment(participantID: $0.id, share: share) }; session.items[i].sharingRule = .sharedByEveryone; recalculate() }
+    func save() async { guard let result else { validationMessage = "Complete the split before saving."; return }; do { let record = SavedCalculationRecord(id: session.id, recordType: .split, tipResult: nil, splitResult: result, receiptID: session.receiptID, merchantName: nil, notes: session.name, currencyConversion: nil, shareSummary: shareSummary, createdAt: session.createdAt, updatedAt: Date()); try await repository.saveCalculation(record); saveMessage = "Split saved." } catch { saveMessage = "Could not save split." } }
+    var shareSummary: String { guard let result else { return "Tips for Tips — Bill Split" }; return (["Tips for Tips — Bill Split", "", "Restaurant total: \(money(result.originalTotal))"] + result.participantResults.map { "\($0.participantName): \(money($0.finalAmount))" } + ["", "Tax included: \(money(session.tax))", "Tip included: \(money(session.tipAmount))"]).joined(separator: "\n") }
+    func money(_ value: Decimal) -> String { formatMoney(value, code: session.currencyCode) }
 }
 
-#Preview { SplitBillCalculator() }
+extension SplitCalculationEngine { func calculatePercentForUI(count: Int) -> [Decimal] { guard count > 0 else { return [] }; let base = Decimal(100) / Decimal(count); return Array(repeating: base, count: count) } }
+
+struct SplitBillCalculator: View {
+    @StateObject private var model: SplitBillViewModel
+    init(context: SplitCalculatorContext = .manual) { _model = StateObject(wrappedValue: SplitBillViewModel(context: context)) }
+    var body: some View { AppScreen { ScrollView { LazyVStack(spacing: AppSpacing.section) { ScreenTitle(text: "Advanced Split Bill", subtitle: "Equal, custom amount, percentage and itemized splitting with transparent tax, tip and rounding."); billCard; modeSelector; modeBody; allocationCard; if let message = model.validationMessage { validation(message) }; if let result = model.result { SplitResultCard(model: model, result: result) } }.padding(AppSpacing.screen) } }.navigationTitle("Split Bill").navigationBarTitleDisplayMode(.inline).hideKeyboardToolbar() }
+    private var billCard: some View { ThemedCard { Text("Bill summary").appFont(.h2); DecimalValueField(title: "Subtotal", value: $model.session.subtotal) { model.recalculate() }; DecimalValueField(title: "Tax", value: $model.session.tax) { model.recalculate() }; DecimalValueField(title: "Tip", value: $model.session.tipAmount) { model.recalculate() }; DecimalValueField(title: "Final total", value: $model.session.total) { model.recalculate() }; Text("Difference from subtotal + tax + tip: \(model.money(model.session.total - model.session.subtotal - model.session.tax - model.session.tipAmount))").appFont(.paragraph).accessibilityLabel("Bill reconciliation difference") } }
+    private var modeSelector: some View { ScrollView(.horizontal, showsIndicators: false) { HStack { ForEach(SplitMode.allCases) { mode in Button { model.setMode(mode) } label: { Label(mode.title, systemImage: model.session.mode == mode ? "checkmark.circle.fill" : "circle").padding(12).background(model.session.mode == mode ? AppTheme.accent : AppTheme.surface).clipShape(RoundedRectangle(cornerRadius: 14)) }.accessibilityLabel("\(mode.title) mode").accessibilityValue(model.session.mode == mode ? "Selected" : "Not selected") } } } }
+    @ViewBuilder private var modeBody: some View { ParticipantsCard(model: model); switch model.session.mode { case .equal: ThemedCard { Text("Equal split stays simple: enter the total and participant count. Remainder cents are distributed deterministically so totals are preserved.").appFont(.paragraph) }; case .customAmount: CustomAmountCard(model: model); case .percentage: PercentageCard(model: model); case .itemized: ItemizedCard(model: model) } }
+    private var allocationCard: some View { ThemedCard { Text("Tax, tip and rounding").appFont(.h2); Picker("Tax allocation", selection: $model.session.taxAllocationMode) { ForEach(ChargeAllocationMode.allCases) { Text($0.title).tag($0) } }.onChange(of: model.session.taxAllocationMode) { _ in model.recalculate() }; Picker("Tip allocation", selection: $model.session.tipAllocationMode) { ForEach(ChargeAllocationMode.allCases) { Text($0.title).tag($0) } }.onChange(of: model.session.tipAllocationMode) { _ in model.recalculate() }; Picker("Rounding", selection: $model.session.roundingRule) { ForEach(SplitRoundingRule.allCases) { Text($0.title).tag($0) } }.onChange(of: model.session.roundingRule) { _ in model.recalculate() } } }
+    private func validation(_ message: String) -> some View { ThemedCard { Text(message).appFont(.paragraph).foregroundStyle(AppTheme.highlight).accessibilityLabel("Validation: \(message)") } }
+}
+
+
+struct DecimalValueField: View { let title: String; @Binding var value: Decimal; let onChange: () -> Void; @State private var text = ""; var body: some View { TextField(title, text: $text).keyboardType(.decimalPad).textFieldStyle(AppTextFieldStyle()).onAppear { if text.isEmpty { text = "\(value)" } }.onChange(of: text) { newValue in if let parsed = LocalizedDecimalParser.parse(newValue), parsed >= 0 { value = parsed }; onChange() }.accessibilityLabel(title) } }
+
+struct ParticipantsCard: View { @ObservedObject var model: SplitBillViewModel; var body: some View { ThemedCard { Text("Participants").appFont(.h2); ForEach($model.session.participants) { $p in HStack { TextField("Name", text: $p.name).textFieldStyle(AppTextFieldStyle()).onChange(of: p.name) { _ in model.recalculate() }; Button(p.isPaid ? "Mark Unpaid" : "Mark Paid") { model.mark(p.id, paid: !p.isPaid) }; Button(role: .destructive) { model.deleteParticipant(p.id) } label: { Label("Delete", systemImage: "trash") }.accessibilityLabel("Delete participant \(p.name)") } }; PrimaryButton(title: "Add Participant", systemImage: "plus") { model.addParticipant() } } } }
+struct CustomAmountCard: View { @ObservedObject var model: SplitBillViewModel; var body: some View { ThemedCard { Text("Custom amounts").appFont(.h2); ForEach($model.session.participants) { $p in VStack(alignment: .leading) { Text(p.name).appFont(.h3); DecimalValueField(title: "Assigned amount", value: Binding(get: { p.customAmount ?? 0 }, set: { p.customAmount = $0 })) { model.recalculate() }; HStack { SecondaryButton(title: "Assign Remaining") { model.assignRemaining(to: p.id) } } } }; let assigned = model.session.participants.reduce(Decimal(0)) { $0 + ($1.customAmount ?? 0) }; ResultSummaryRow(label: "Remaining", value: model.money(model.session.subtotal - assigned)) } } }
+struct PercentageCard: View { @ObservedObject var model: SplitBillViewModel; var body: some View { ThemedCard { Text("Percentages").appFont(.h2); ForEach($model.session.participants) { $p in DecimalValueField(title: "\(p.name) percent", value: Binding(get: { p.percentage ?? 0 }, set: { p.percentage = $0 })) { model.recalculate() } }; let total = model.session.participants.reduce(Decimal(0)) { $0 + ($1.percentage ?? 0) }; ResultSummaryRow(label: "Total percentage", value: "\(total)%"); SecondaryButton(title: "Split Evenly") { model.splitEvenlyPercentages(); model.recalculate() } } } }
+struct ItemizedCard: View { @ObservedObject var model: SplitBillViewModel; var body: some View { ThemedCard { Text("Items").appFont(.h2); ForEach($model.session.items) { $item in VStack(alignment: .leading) { TextField("Item name", text: $item.name).textFieldStyle(AppTextFieldStyle()).onChange(of: item.name) { _ in model.recalculate() }; DecimalValueField(title: "Price", value: $item.price) { model.recalculate() }; Text("Assigned to: \(assignedNames(item))").appFont(.paragraph); HStack { Menu("Assign") { ForEach(model.session.participants) { p in Button(p.name) { item.assignments = [SplitItemAssignment(participantID: p.id, share: 1)]; model.recalculate() } }; Button("Everyone equally") { model.shareItemWithEveryone(item.id) } }; Button(role: .destructive) { model.deleteItem(item.id) } label: { Label("Delete item", systemImage: "trash") } } } }; PrimaryButton(title: "Add Item", systemImage: "plus") { model.addItem() }; let itemTotal = model.session.items.reduce(Decimal(0)) { $0 + $1.price }; ResultSummaryRow(label: "Item subtotal", value: model.money(itemTotal)); ResultSummaryRow(label: "Difference", value: model.money(model.session.subtotal - itemTotal)) } }
+    private func assignedNames(_ item: SplitItem) -> String { let ids = Set(item.assignments.map(\.participantID)); let names = model.session.participants.filter { ids.contains($0.id) }.map(\.name); return names.isEmpty ? "Unassigned" : names.joined(separator: ", ") }
+}
+struct SplitResultCard: View { @ObservedObject var model: SplitBillViewModel; let result: SplitCalculationResult; var body: some View { ThemedCard { Text("Bill Split").appFont(.h2); ResultSummaryRow(label: "Original bill", value: model.money(result.originalTotal)); ResultSummaryRow(label: "Rounded payments", value: model.money(result.roundedCollectedTotal)); ResultSummaryRow(label: "Difference", value: model.money(result.roundingDifference)); let paid = result.participantResults.filter(\.isPaid).reduce(Decimal(0)) { $0 + $1.finalAmount }; ResultSummaryRow(label: "Paid", value: model.money(paid)); ResultSummaryRow(label: "Outstanding", value: model.money(result.roundedCollectedTotal - paid)); ForEach(result.participantResults) { p in DisclosureGroup { ResultSummaryRow(label: "Assigned bill", value: model.money(p.baseAmount)); ResultSummaryRow(label: "Tax", value: model.money(p.taxAmount)); ResultSummaryRow(label: "Tip", value: model.money(p.tipAmount)); ResultSummaryRow(label: "Rounding", value: model.money(p.roundingAdjustment)); ForEach(p.itemBreakdown) { item in ResultSummaryRow(label: item.itemName, value: model.money(item.amount)) } } label: { HStack { Text(p.participantName).appFont(.h3); Spacer(); Text(model.money(p.finalAmount)).appFont(.h3); Text(p.isPaid ? "Paid" : "Unpaid").appFont(.paragraph) } }.accessibilityLabel("\(p.participantName), \(model.money(p.finalAmount)), \(p.isPaid ? "Paid" : "Unpaid")") }; HStack { Button("Save Split") { Task { await model.save() } }; ShareLink(item: model.shareSummary) { Text("Share Summary") } }; HStack { Button("Mark All Paid") { model.markAllPaid() }; Button("Reset Paid Status") { model.resetPaid() } }; if let msg = model.saveMessage { Text(msg).appFont(.paragraph) } } } }
+
+#Preview { NavigationStack { SplitBillCalculator() } }

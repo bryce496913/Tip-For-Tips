@@ -3,7 +3,7 @@ import SwiftUI
 enum AppRoute: Hashable {
     case guidedTipAssistant
     case receiptScanner(ReceiptScannerContext = .newReceipt)
-    case splitCalculator
+    case splitCalculator(SplitCalculatorContext = .manual)
     case currencyConverter
     case history
     case tippingGuide
@@ -101,7 +101,7 @@ struct MainMenu: View {
         case .guidedTipAssistant: GuidedTipAssistantView()
         case let .receiptScanner(context): ReceiptScannerView(context: context)
         case .legacyReceipts: Receipts()
-        case .splitCalculator: SplitBillCalculator()
+        case let .splitCalculator(context): SplitBillCalculator(context: context)
         case .currencyConverter: CurrencyConverter()
         case .history: HistoryPlaceholder()
         case .tippingGuide: HelpfulTips()
@@ -118,7 +118,7 @@ struct MainMenu: View {
 struct DashboardQuickActions: View {
     private let actions: [(String, String, AppRoute)] = [
         ("Scan Receipt", "doc.text.viewfinder", .receiptScanner()),
-        ("Split a Bill", "person.2", .splitCalculator),
+        ("Split a Bill", "person.2", .splitCalculator()),
         ("Convert Currency", "arrow.left.arrow.right", .currencyConverter),
         ("What Should I Tip?", "book", .tippingGuide)
     ]
@@ -196,7 +196,7 @@ final class GuidedTipAssistantViewModel: ObservableObject {
 
     var shareSummary: String { guard let result else { return "" }; return "Tip for \(result.service.name): \(formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode)); final total \(formatMoney(result.finalTotal, code: result.input.currencyCode))." }
     func guideRoute() -> AppRoute { .guideSection(selectedService?.guideSectionID ?? input.serviceID) }
-    func splitRoute() -> AppRoute { .splitCalculator }
+    func splitRoute() -> AppRoute { guard let result else { return .splitCalculator() }; return .splitCalculator(.tipResult(result)) }
     func convertRoute() -> AppRoute { .currencyConverter }
 
     private func invalidate() { result = nil; validationMessage = nil }
