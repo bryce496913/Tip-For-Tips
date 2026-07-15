@@ -5,6 +5,9 @@ struct HelpfulTips: View {
     @State private var expandedFAQIDs: Set<Int> = []
     @State private var selectedTipCategory: TippingTipCategory? = nil
     @State private var searchText = ""
+    @AppStorage("guide.bookmarks") private var bookmarkStorage = ""
+    @AppStorage("guide.recent") private var recentStorage = ""
+    @State private var showBookmarkedOnly = false
     private var searchQuery: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var isSearching: Bool { !searchQuery.isEmpty }
     private var filteredFAQs: [TippingFAQ] {
@@ -83,9 +86,11 @@ struct HelpfulTips: View {
     private var faqSection: some View {
         AccordionSection(title: "Frequently Asked Questions", isExpanded: binding(for: .faq)) {
             if filteredFAQs.isEmpty { EmptySearchCard(kind: "FAQ", clearAction: { searchText = "" }) }
-            ForEach(filteredFAQs) { faq in
-                FAQRow(faq: faq, isExpanded: expandedFAQIDs.contains(faq.id)) {
-                    if expandedFAQIDs.contains(faq.id) { expandedFAQIDs.remove(faq.id) } else { expandedFAQIDs.insert(faq.id) }
+            ForEach(filteredFAQs.filter { !showBookmarkedOnly || bookmarks.contains("faq-\($0.id)") }) { faq in
+                HStack { FAQRow(faq: faq, isExpanded: expandedFAQIDs.contains(faq.id)) {
+                    if expandedFAQIDs.contains(faq.id) { expandedFAQIDs.remove(faq.id) } else { expandedFAQIDs.insert(faq.id); trackRecent(id: "faq-\(faq.id)", title: faq.question) }
+                }
+                BookmarkButton(isBookmarked: bookmarks.contains("faq-\(faq.id)")) { toggleBookmark("faq-\(faq.id)") }
                 }
             }
         }
@@ -93,9 +98,10 @@ struct HelpfulTips: View {
 
     private var travelerTipsSection: some View {
         AccordionSection(title: "Helpful Tipping Tips for Travelers", isExpanded: binding(for: .travelerTips)) {
-            TipCategoryChips(selectedCategory: $selectedTipCategory)
-            if filteredTips.isEmpty { EmptySearchCard(kind: "traveler tip", clearAction: { searchText = ""; selectedTipCategory = nil }) }
-            ForEach(filteredTips) { tip in TipCard(tip: tip) }
+            HStack { TipCategoryChips(selectedCategory: $selectedTipCategory); Toggle("Bookmarked", isOn: $showBookmarkedOnly).labelsHidden().accessibilityLabel("Show bookmarked guide items only") }
+            let visibleTips = filteredTips.filter { !showBookmarkedOnly || bookmarks.contains("tip-\($0.id)") }
+            if visibleTips.isEmpty { EmptySearchCard(kind: "traveler tip", clearAction: { searchText = ""; selectedTipCategory = nil; showBookmarkedOnly = false }) }
+            ForEach(visibleTips) { tip in HStack(alignment: .top) { Button { trackRecent(id: "tip-\(tip.id)", title: tip.title) } label: { TipCard(tip: tip) }.buttonStyle(.plain); BookmarkButton(isBookmarked: bookmarks.contains("tip-\(tip.id)")) { toggleBookmark("tip-\(tip.id)") } } }
         }
     }
 
@@ -114,6 +120,10 @@ struct HelpfulTips: View {
             }
         }
     }
+
+    private var bookmarks: Set<String> { Set(bookmarkStorage.split(separator: ",").map(String.init)) }
+    private func toggleBookmark(_ id: String) { var set = bookmarks; if set.contains(id) { set.remove(id) } else { set.insert(id) }; bookmarkStorage = set.sorted().joined(separator: ",") }
+    private func trackRecent(id: String, title: String) { var parts = recentStorage.split(separator: "|").map(String.init).filter { !$0.hasPrefix(id + ":") }; parts.insert("\(id):\(title)", at: 0); recentStorage = parts.prefix(20).joined(separator: "|") }
 
     private func binding(for section: HelpfulTipsSection) -> Binding<Bool> {
         Binding(
@@ -329,3 +339,6 @@ private struct EmptySearchCard: View {
 }
 
 #Preview { HelpfulTips() }
+
+
+private struct BookmarkButton: View { let isBookmarked: Bool; let action: () -> Void; var body: some View { Button(action: action) { Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark").foregroundStyle(AppTheme.highlight).frame(width: 44, height: 44) }.accessibilityLabel(isBookmarked ? "Remove bookmark" : "Bookmark guide item").accessibilityValue(isBookmarked ? "Bookmarked" : "Not bookmarked") } }

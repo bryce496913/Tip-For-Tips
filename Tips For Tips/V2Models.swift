@@ -427,3 +427,97 @@ struct UserPreferences: Codable, Hashable {
 
     static let defaults = UserPreferences(homeCurrencyCode: "USD", defaultTipPercentage: 20, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 1, roundingPreference: .exactCents, showTippingExplanations: true, hapticsEnabled: true, soundsEnabled: true, appearancePreference: .dark, hasCompletedOnboarding: false)
 }
+
+// MARK: - V2 Phase 5 Connected Experience Models
+
+enum HistoryRecordType: String, Codable, CaseIterable, Identifiable, Hashable {
+    case tipCalculation
+    case receipt
+    case split
+    var id: String { rawValue }
+    var title: String { switch self { case .tipCalculation: return "Tip Calculations"; case .receipt: return "Receipts"; case .split: return "Splits" } }
+}
+
+struct HistoryEntry: Identifiable, Codable, Hashable {
+    let id: UUID
+    let recordType: HistoryRecordType
+    let linkedRecordID: UUID
+    var title: String
+    var subtitle: String?
+    var serviceID: String?
+    var merchantName: String?
+    var currencyCode: String
+    var totalAmount: Decimal?
+    let createdAt: Date
+    var updatedAt: Date
+    var participantNames: [String] = []
+    var notes: String = ""
+    var receiptThumbnailFilename: String? = nil
+    var paidSummary: String? = nil
+}
+
+enum HistorySortOption: String, CaseIterable, Identifiable, Hashable {
+    case newestFirst, oldestFirst, highestTotal, lowestTotal, title
+    var id: String { rawValue }
+    var title: String { switch self { case .newestFirst: return "Newest first"; case .oldestFirst: return "Oldest first"; case .highestTotal: return "Highest total"; case .lowestTotal: return "Lowest total"; case .title: return "Title A–Z" } }
+}
+
+struct HistoryFilter: Hashable {
+    var recordType: HistoryRecordType? = nil
+    var serviceID: String? = nil
+    var currencyCode: String? = nil
+    var dateRange: ClosedRange<Date>? = nil
+    var paidOnly: Bool? = nil
+    static let all = HistoryFilter()
+}
+
+struct HistoryViewState: Hashable {
+    var entries: [HistoryEntry]
+    var query: String = ""
+    var filter: HistoryFilter = .all
+    var sort: HistorySortOption = .newestFirst
+
+    var filteredAndSorted: [HistoryEntry] {
+        let normalizedQuery = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = entries.filter { entry in
+            if let type = filter.recordType, entry.recordType != type { return false }
+            if let serviceID = filter.serviceID, entry.serviceID != serviceID { return false }
+            if let code = filter.currencyCode, entry.currencyCode != code { return false }
+            if let range = filter.dateRange, !range.contains(entry.createdAt) { return false }
+            if let paidOnly = filter.paidOnly {
+                let isPaid = entry.paidSummary?.localizedCaseInsensitiveContains("all paid") == true
+                if paidOnly != isPaid { return false }
+            }
+            guard !normalizedQuery.isEmpty else { return true }
+            let haystack = ([entry.title, entry.subtitle, entry.serviceID, entry.merchantName, entry.currencyCode, entry.notes, entry.paidSummary] + entry.participantNames).compactMap { $0 }.joined(separator: " ") + " " + entry.createdAt.formatted(date: .abbreviated, time: .omitted)
+            return haystack.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current).contains(normalizedQuery)
+        }
+        return filtered.sorted { a, b in
+            switch sort {
+            case .newestFirst: return a.createdAt == b.createdAt ? a.title < b.title : a.createdAt > b.createdAt
+            case .oldestFirst: return a.createdAt == b.createdAt ? a.title < b.title : a.createdAt < b.createdAt
+            case .highestTotal: return compareTotals(a, b, descending: true)
+            case .lowestTotal: return compareTotals(a, b, descending: false)
+            case .title: return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            }
+        }
+    }
+
+    private func compareTotals(_ a: HistoryEntry, _ b: HistoryEntry, descending: Bool) -> Bool {
+        switch (a.totalAmount, b.totalAmount) {
+        case let (lhs?, rhs?) where lhs != rhs: return descending ? lhs > rhs : lhs < rhs
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return a.createdAt > b.createdAt
+        }
+    }
+}
+
+struct ConvertibleAmount: Identifiable, Hashable, Codable { let id: String; let label: String; let amount: Decimal }
+struct CurrencyConversionContext: Hashable, Codable { var sourceCurrencyCode: String; var values: [ConvertibleAmount]; var sourceRecordID: UUID? }
+struct MultiValueConversionLine: Identifiable, Hashable { let id: String; let label: String; let sourceAmount: Decimal; let convertedAmount: Decimal }
+struct CurrencyPair: Identifiable, Codable, Hashable { var sourceCode: String; var destinationCode: String; var id: String { "\(sourceCode)-\(destinationCode)" } }
+struct StoredExchangeRate: Identifiable, Codable, Hashable { var sourceCode: String; var destinationCode: String; var rate: Decimal; var rateDate: Date?; var fetchedAt: Date; var id: String { "\(sourceCode)-\(destinationCode)" } }
+
+struct GuideBookmark: Identifiable, Codable, Hashable { var id: String; var createdAt: Date }
+struct RecentGuideItem: Identifiable, Codable, Hashable { var id: String; var title: String; var viewedAt: Date }
