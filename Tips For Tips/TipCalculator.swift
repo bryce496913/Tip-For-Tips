@@ -128,7 +128,10 @@ struct ServicePicker: View {
                 .pickerStyle(.wheel)
             }
             .navigationTitle("Select Service")
-            .toolbar { Button("Done") { dismiss() } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
         }
         .presentationDetents([.medium])
     }
