@@ -215,10 +215,10 @@ actor FileReceiptRepository: ReceiptRepository {
         let thumbURL = try validatedURL(filename: thumbName, in: thumbsDir)
         do { try fullData.write(to: imageURL, options: [.atomic]); try thumbData.write(to: thumbURL, options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
         var record = draft; record.imageFilename = imageName; record.thumbnailFilename = thumbName
-        do { try saveReceipt(record); return record } catch { try? fileManager.removeItem(at: imageURL); try? fileManager.removeItem(at: thumbURL); throw error }
+        do { try persistReceipt(record); return record } catch { try? fileManager.removeItem(at: imageURL); try? fileManager.removeItem(at: thumbURL); throw error }
     }
-    func saveReceipt(_ receipt: ReceiptRecord) async throws { try saveReceipt(receipt) }
-    private func saveReceipt(_ receipt: ReceiptRecord) throws { var records = try loadRecords(); records.removeAll { $0.id == receipt.id }; records.insert(receipt, at: 0); try writeRecordsAtomically(records) }
+    func saveReceipt(_ receipt: ReceiptRecord) async throws { try persistReceipt(receipt) }
+    private func persistReceipt(_ receipt: ReceiptRecord) throws { var records = try loadRecords(); records.removeAll { $0.id == receipt.id }; records.insert(receipt, at: 0); try writeRecordsAtomically(records) }
     func deleteReceipt(id: UUID) async throws {
         var records = try loadRecords()
         guard let receipt = records.first(where: { $0.id == id }) else { return }
@@ -237,7 +237,7 @@ actor FileReceiptRepository: ReceiptRepository {
         try fullData.write(to: validatedURL(filename: imageName, in: imagesDir), options: [.atomic])
         try thumbData.write(to: validatedURL(filename: thumbName, in: thumbsDir), options: [.atomic])
         record.imageFilename = imageName; record.thumbnailFilename = thumbName; record.updatedAt = Date()
-        try saveReceipt(record)
+        try persistReceipt(record)
         return record
     }
     func rename(receiptID: UUID, newName: String) async throws -> ReceiptRecord {
