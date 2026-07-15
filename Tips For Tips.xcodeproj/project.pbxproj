@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		EERS00012BE0000000123456 /* ReceiptScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EERS00022BE0000000123456 /* ReceiptScanner.swift */; };
 		EEV200012BD8000000123456 /* V2Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200022BD8000000123456 /* V2Models.swift */; };
 		EEV200032BD8000000123456 /* V2Repositories.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200042BD8000000123456 /* V2Repositories.swift */; };
 		EEV200052BD8000000123456 /* V2CalculationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200062BD8000000123456 /* V2CalculationEngine.swift */; };
@@ -30,6 +31,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		EERS00022BE0000000123456 /* ReceiptScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptScanner.swift; sourceTree = "<group>"; };
 		EEV200022BD8000000123456 /* V2Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2Models.swift; sourceTree = "<group>"; };
 		EEV200042BD8000000123456 /* V2Repositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2Repositories.swift; sourceTree = "<group>"; };
 		EEV200062BD8000000123456 /* V2CalculationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2CalculationEngine.swift; sourceTree = "<group>"; };
@@ -92,6 +94,7 @@
 				EE2C07282BD7F99500F29EF6 /* CustomSplitView.swift */,
 				EE648D6C2BC2F31300170654 /* TipCalculator.swift */,
 				EE648D722BC2F34500170654 /* Receipts.swift */,
+				EERS00022BE0000000123456 /* ReceiptScanner.swift */,
 				EE648D742BC2F35500170654 /* NotePad.swift */,
 				EE648D762BC2F36100170654 /* HelpfulTips.swift */,
 				EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */,
@@ -198,6 +201,7 @@
 				EE648D712BC2F33600170654 /* CurrencyConverter.swift in Sources */,
 				EE94B0D22BD2E3DA00538D5A /* CurrencyConverterViewModel.swift in Sources */,
 				EE648D732BC2F34500170654 /* Receipts.swift in Sources */,
+				EERS00012BE0000000123456 /* ReceiptScanner.swift in Sources */,
 				EE648D6B2BC2F24600170654 /* Color.swift in Sources */,
 				EEV200012BD8000000123456 /* V2Models.swift in Sources */,
 				EEV200032BD8000000123456 /* V2Repositories.swift in Sources */,

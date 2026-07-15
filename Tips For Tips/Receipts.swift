@@ -43,6 +43,16 @@ actor ReceiptStore {
         let now = Date(); records.append(ReceiptRecord(id: id, merchantName: name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: imageName, thumbnailFilename: thumbName, notes: "", createdAt: now, updatedAt: now)); try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    func save(record: ReceiptRecord, fullImage: UIImage, thumbnail: UIImage) throws -> [ReceiptRecord] {
+        try ensureDirectories()
+        let imageName = record.imageFilename ?? "\(record.id.uuidString).jpg"
+        let thumbName = record.thumbnailFilename ?? "\(record.id.uuidString)-thumb.jpg"
+        guard let fullData = fullImage.jpegData(compressionQuality: 0.82), let thumbData = thumbnail.jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
+        do { try fullData.write(to: imagesDir.appendingPathComponent(imageName), options: [.atomic]); try thumbData.write(to: thumbsDir.appendingPathComponent(thumbName), options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
+        do { var records = (try? load()) ?? []; records.removeAll { $0.id == record.id }; records.insert(record, at: 0); try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt } }
+        catch { try? fileManager.removeItem(at: imagesDir.appendingPathComponent(imageName)); try? fileManager.removeItem(at: thumbsDir.appendingPathComponent(thumbName)); throw ReceiptStorageError.metadataWrite }
+    }
+
     func rename(_ record: ReceiptRecord, to newName: String) throws -> [ReceiptRecord] { var records = try load(); guard let index = records.firstIndex(where: { $0.id == record.id }) else { return records }; records[index].merchantName = newName; records[index].updatedAt = Date(); do { try saveMetadata(records); return records.sorted { $0.updatedAt > $1.updatedAt } } catch { throw ReceiptStorageError.rename } }
     func delete(_ record: ReceiptRecord) throws -> [ReceiptRecord] { var records = try load(); guard records.contains(where: { $0.id == record.id }) else { return records }; do { try fileManager.removeItem(at: imagesDir.appendingPathComponent(record.imageFilename ?? "")); if let t = record.thumbnailFilename { try? fileManager.removeItem(at: thumbsDir.appendingPathComponent(t)) }; records.removeAll { $0.id == record.id }; try saveMetadata(records); return records } catch { throw ReceiptStorageError.delete } }
 
@@ -84,7 +94,7 @@ struct Receipts: View {
     @State private var presentNameAfterDismiss = false
 
     var body: some View {
-        AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { ScreenTitle(text: "Receipts", subtitle: "Save receipt photos locally and reopen them later."); ThemedCard { PrimaryButton(title: "Add Receipt", systemImage: "camera") { activeSheet = .camera }; SecondaryButton(title: "Saved Receipts", systemImage: "photo.on.rectangle") { activeSheet = .saved } }; if viewModel.records.isEmpty { EmptyStateView(systemImage: "receipt", title: "No saved receipts", message: "Add a receipt photo to keep a local copy in this app.") } else { Text("\(viewModel.records.count) saved receipt\(viewModel.records.count == 1 ? "" : "s")").appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.8)) } }.padding(AppSpacing.screen) } }
+        AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { ScreenTitle(text: "Receipts", subtitle: "Save receipt photos locally and reopen them later."); ThemedCard { NavigationLink(value: AppRoute.receiptScanner(.newReceipt)) { Label("Add Receipt", systemImage: "camera").appFont(.h3).frame(maxWidth: .infinity, minHeight: 44) }.buttonStyle(AppButtonStylePublic.primary); SecondaryButton(title: "Saved Receipts", systemImage: "photo.on.rectangle") { activeSheet = .saved } }; if viewModel.records.isEmpty { EmptyStateView(systemImage: "receipt", title: "No saved receipts", message: "Add a receipt photo to keep a local copy in this app.") } else { Text("\(viewModel.records.count) saved receipt\(viewModel.records.count == 1 ? "" : "s")").appFont(.paragraph).foregroundStyle(AppTheme.text.opacity(0.8)) } }.padding(AppSpacing.screen) } }
         .navigationTitle("Receipts").navigationBarTitleDisplayMode(.inline).onAppear { viewModel.load() }
         .sheet(item: $activeSheet, onDismiss: { if presentNameAfterDismiss { presentNameAfterDismiss = false; activeSheet = .name } }) { sheet in
             switch sheet {

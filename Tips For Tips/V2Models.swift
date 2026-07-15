@@ -227,31 +227,80 @@ enum ReceiptChargeKind: String, Codable, Hashable {
     case suggestedTip
     case deliveryFee
     case unknownCharge
+    case includedGratuity
+    case automaticGratuity
+    case serviceCharge
+    case hospitalityCharge
+    case administrativeFee
+    case suggestedGratuity
+    case unknown
+}
+
+enum ReceiptChargeClassification: String, Codable, CaseIterable, Identifiable, Hashable {
+    case includedGratuity
+    case serviceChargeUnsure
+    case deliveryFee
+    case suggestedGratuityOnly
+    case notRelevant
+    case otherOrUnclear
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .includedGratuity: return "Included gratuity"
+        case .serviceChargeUnsure: return "Service charge / unsure"
+        case .deliveryFee: return "Delivery fee"
+        case .suggestedGratuityOnly: return "Suggested only"
+        case .notRelevant: return "Not relevant"
+        case .otherOrUnclear: return "Other or unclear"
+        }
+    }
 }
 
 struct DetectedReceiptCharge: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var label: String
     var amount: Decimal?
+    var percentage: Decimal? = nil
     var kind: ReceiptChargeKind
     var confidence: Decimal
+    var userClassification: ReceiptChargeClassification? = nil
+}
+
+enum ReceiptConfirmationStatus: String, Codable, Hashable {
+    case imported
+    case needsReview
+    case userConfirmed
 }
 
 struct ReceiptRecord: Identifiable, Codable, Hashable {
     let id: UUID
     var merchantName: String?
     var receiptDate: Date?
+    var currencyCode: String
     var subtotal: Decimal?
     var tax: Decimal?
     var total: Decimal?
     var detectedCharges: [DetectedReceiptCharge]
     var imageFilename: String?
     var thumbnailFilename: String?
+    var recognizedText: String?
     var notes: String
+    var confirmationStatus: ReceiptConfirmationStatus
     let createdAt: Date
     var updatedAt: Date
 
     var displayName: String { merchantName?.isEmpty == false ? merchantName! : "Receipt" }
+
+    init(id: UUID, merchantName: String?, receiptDate: Date?, currencyCode: String = "USD", subtotal: Decimal?, tax: Decimal?, total: Decimal?, detectedCharges: [DetectedReceiptCharge], imageFilename: String?, thumbnailFilename: String?, recognizedText: String? = nil, notes: String, confirmationStatus: ReceiptConfirmationStatus = .imported, createdAt: Date, updatedAt: Date) {
+        self.id = id; self.merchantName = merchantName; self.receiptDate = receiptDate; self.currencyCode = currencyCode; self.subtotal = subtotal; self.tax = tax; self.total = total; self.detectedCharges = detectedCharges; self.imageFilename = imageFilename; self.thumbnailFilename = thumbnailFilename; self.recognizedText = recognizedText; self.notes = notes; self.confirmationStatus = confirmationStatus; self.createdAt = createdAt; self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey { case id, merchantName, receiptDate, currencyCode, subtotal, tax, total, detectedCharges, imageFilename, thumbnailFilename, recognizedText, notes, confirmationStatus, createdAt, updatedAt }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id); merchantName = try c.decodeIfPresent(String.self, forKey: .merchantName); receiptDate = try c.decodeIfPresent(Date.self, forKey: .receiptDate); currencyCode = try c.decodeIfPresent(String.self, forKey: .currencyCode) ?? "USD"; subtotal = try c.decodeIfPresent(Decimal.self, forKey: .subtotal); tax = try c.decodeIfPresent(Decimal.self, forKey: .tax); total = try c.decodeIfPresent(Decimal.self, forKey: .total); detectedCharges = try c.decodeIfPresent([DetectedReceiptCharge].self, forKey: .detectedCharges) ?? []; imageFilename = try c.decodeIfPresent(String.self, forKey: .imageFilename); thumbnailFilename = try c.decodeIfPresent(String.self, forKey: .thumbnailFilename); recognizedText = try c.decodeIfPresent(String.self, forKey: .recognizedText); notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""; confirmationStatus = try c.decodeIfPresent(ReceiptConfirmationStatus.self, forKey: .confirmationStatus) ?? .imported; createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(); updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+    }
 }
 
 struct SplitParticipant: Identifiable, Codable, Hashable {
