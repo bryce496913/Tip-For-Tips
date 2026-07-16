@@ -108,8 +108,8 @@ actor FileUserPreferencesRepository: UserPreferencesRepository {
 
     func loadPreferences() async throws -> UserPreferences {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return .defaults }
-        do { return try decoder.decode(UserPreferences.self, from: Data(contentsOf: fileURL)) }
-        catch { throw V2PersistenceError.readFailed }
+        do { return try decoder.decode(UserPreferences.self, from: Data(contentsOf: fileURL)).validated }
+        catch { return .defaults }
     }
 
     func savePreferences(_ preferences: UserPreferences) async throws {
