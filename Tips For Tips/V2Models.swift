@@ -438,6 +438,17 @@ struct UserPreferences: Codable, Hashable {
     static let defaults = UserPreferences(homeCurrencyCode: "USD", defaultTipPercentage: 20, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 1, roundingPreference: .exactCents, showTippingExplanations: true, hapticsEnabled: true, soundsEnabled: true, appearancePreference: .dark, hasCompletedOnboarding: false)
 }
 
+extension UserPreferences {
+    var validated: UserPreferences {
+        var copy = self
+        if Locale.commonISOCurrencyCodes.contains(copy.homeCurrencyCode) == false { copy.homeCurrencyCode = Self.defaults.homeCurrencyCode }
+        if copy.defaultTipPercentage < 0 || copy.defaultTipPercentage > 100 { copy.defaultTipPercentage = Self.defaults.defaultTipPercentage }
+        if copy.defaultPeopleCount < 1 { copy.defaultPeopleCount = Self.defaults.defaultPeopleCount }
+        return copy
+    }
+}
+
+
 // MARK: - Connected Experience Models
 
 enum HistoryRecordType: String, Codable, CaseIterable, Identifiable, Hashable {
