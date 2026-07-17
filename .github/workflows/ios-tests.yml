@@ -1,0 +1,35 @@
+name: iOS Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+      - name: Confirm simulator
+        run: |
+          xcrun simctl list devices available
+          xcrun simctl list devices available | grep -q "iPhone 16"
+      - name: Run unit and UI tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project "Tips For Tips.xcodeproj" \
+            -scheme "Tips For Tips" \
+            -destination "platform=iOS Simulator,name=iPhone 16" \
+            -resultBundlePath TestResults.xcresult 2>&1 | tee xcodebuild-test.log
+      - name: Upload failed test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: |
+            TestResults.xcresult
+            xcodebuild-test.log
