@@ -11,6 +11,7 @@ protocol ReceiptRepository: Sendable {
     func fetchReceipts() async throws -> [ReceiptRecord]
     func receipt(id: UUID) async throws -> ReceiptRecord?
     func create(draft: ReceiptRecord, fullImage: UIImage, thumbnail: UIImage) async throws -> ReceiptRecord
+    func createMetadataOnly(draft: ReceiptRecord) async throws
     func saveReceipt(_ receipt: ReceiptRecord) async throws
     func replaceImage(receiptID: UUID, image: UIImage) async throws -> ReceiptRecord
     func rename(receiptID: UUID, newName: String) async throws -> ReceiptRecord
@@ -217,6 +218,7 @@ actor FileReceiptRepository: ReceiptRepository {
         var record = draft; record.imageFilename = imageName; record.thumbnailFilename = thumbName
         do { try persistReceipt(record); return record } catch { try? fileManager.removeItem(at: imageURL); try? fileManager.removeItem(at: thumbURL); throw error }
     }
+    func createMetadataOnly(draft: ReceiptRecord) async throws { var record = draft; record.imageFilename = nil; record.thumbnailFilename = nil; try ensureDirectories(); try persistReceipt(record) }
     func saveReceipt(_ receipt: ReceiptRecord) async throws { try persistReceipt(receipt) }
     private func persistReceipt(_ receipt: ReceiptRecord) throws { var records = try loadRecords(); records.removeAll { $0.id == receipt.id }; records.insert(receipt, at: 0); try writeRecordsAtomically(records) }
     func deleteReceipt(id: UUID) async throws {
