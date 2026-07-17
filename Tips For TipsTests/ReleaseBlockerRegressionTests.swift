@@ -75,6 +75,18 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
         XCTAssertEqual(String(data: try Data(contentsOf: metadata), encoding: .utf8), "not json")
     }
 
+    func testPartialMigrationDoesNotWriteCompletionMarker() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let receipts = root.appendingPathComponent("Receipts", isDirectory: true)
+        try FileManager.default.createDirectory(at: receipts, withIntermediateDirectories: true)
+        try Data("{ not valid json".utf8).write(to: receipts.appendingPathComponent("receipts.json"))
+
+        let report = await V2MigrationCoordinator(rootURL: root).migrateIfNeeded()
+
+        XCTAssertFalse(report.succeeded)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("V2/migration-v2-complete.json").path))
+    }
+
     func testPublicPlaceholderStringsRemovedFromProductionViews() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Tips For Tips")
         let banned = ["coming next", "future phase", "placeholder", "deep link target", "V1 tools"]

@@ -71,6 +71,36 @@ final class ReceiptFieldParserTests: XCTestCase {
         XCTAssertNil(ReceiptAmountParser.parse("20%"))
     }
 
+    func testReceiptAmountParserAcceptsManualEntryFormatsWithoutCents() {
+        XCTAssertEqual(ReceiptAmountParser.parse("20"), Decimal(20))
+        XCTAssertEqual(ReceiptAmountParser.parse("20.00"), Decimal(20))
+        XCTAssertEqual(ReceiptAmountParser.parse("$20"), Decimal(20))
+        XCTAssertEqual(ReceiptAmountParser.parse("1,234.56"), Decimal(string: "1234.56"))
+        XCTAssertEqual(ReceiptAmountParser.parse("1.234,56"), Decimal(string: "1234.56"))
+        XCTAssertEqual(ReceiptAmountParser.parse("0"), Decimal(0))
+        XCTAssertNil(ReceiptAmountParser.parse(""))
+        XCTAssertNil(ReceiptAmountParser.parse("   "))
+    }
+
+    func testReceiptAmountParserRejectsMalformedManualEntry() {
+        XCTAssertNil(ReceiptAmountParser.parse("-20"))
+        XCTAssertNil(ReceiptAmountParser.parse("12,34,567"))
+        XCTAssertNil(ReceiptAmountParser.parse("twenty"))
+        XCTAssertNil(ReceiptAmountParser.parse("12.30.40"))
+    }
+
+    func testReceiptFieldParserDetectsWholeDollarAmounts() {
+        let result = parse("""
+        Counter Cafe
+        Subtotal $20
+        Tax 0
+        Total 20
+        """)
+        XCTAssertEqual(result.subtotalCandidates.first?.value, 20)
+        XCTAssertEqual(result.taxCandidates.first?.value, 0)
+        XCTAssertEqual(result.totalCandidates.first?.value, 20)
+    }
+
     func testLowConfidenceAndMissingFields() {
         let result = parse("Cafe\nTotal $12.00", confidence: 0.4)
         XCTAssertTrue(result.warnings.contains(.lowConfidenceFields))
