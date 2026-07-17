@@ -146,11 +146,13 @@ actor V2MigrationCoordinator {
         catch { failures.append("Notes: \(error.localizedDescription)") }
 
         let report = V2MigrationReport(fromVersion: 1, toVersion: Self.currentVersion, migratedNotesCount: migratedNotes, migratedReceiptsCount: migratedReceipts, partialFailures: failures, completedAt: Date())
-        do {
-            try fileManager.createDirectory(at: markerURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(report).write(to: markerURL, options: [.atomic])
-        } catch { }
+        if report.succeeded {
+            do {
+                try fileManager.createDirectory(at: markerURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+                try encoder.encode(report).write(to: markerURL, options: [.atomic])
+            } catch { }
+        }
         return report
     }
 
@@ -232,14 +234,48 @@ actor FileReceiptRepository: ReceiptRepository {
 
     func replaceImage(receiptID: UUID, image: UIImage) async throws -> ReceiptRecord {
         guard var record = try loadRecords().first(where: { $0.id == receiptID }) else { throw ReceiptStorageError.metadataRead }
+        try ensureDirectories()
         let processed = image.normalizedForReceipt()
         let imageName = record.imageFilename ?? "\(receiptID.uuidString).jpg"
         let thumbName = record.thumbnailFilename ?? "\(receiptID.uuidString)-thumb.jpg"
         guard let fullData = processed.resizedForReceipt(maxDimension: 1800).jpegData(compressionQuality: 0.82), let thumbData = processed.resizedForReceipt(maxDimension: 420).jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
-        try fullData.write(to: validatedURL(filename: imageName, in: imagesDir), options: [.atomic])
-        try thumbData.write(to: validatedURL(filename: thumbName, in: thumbsDir), options: [.atomic])
+        let imageURL = try validatedURL(filename: imageName, in: imagesDir)
+        let thumbURL = try validatedURL(filename: thumbName, in: thumbsDir)
+        let stagedImageURL = temporaryDir.appendingPathComponent("replace-\(UUID().uuidString)-\(imageName)")
+        let stagedThumbURL = temporaryDir.appendingPathComponent("replace-\(UUID().uuidString)-\(thumbName)")
+        let oldImageBackupURL = temporaryDir.appendingPathComponent("old-\(UUID().uuidString)-\(imageName)")
+        let oldThumbBackupURL = temporaryDir.appendingPathComponent("old-\(UUID().uuidString)-\(thumbName)")
+        var movedOldImage = false
+        var movedOldThumb = false
+        do {
+            try fullData.write(to: stagedImageURL, options: [.atomic])
+            try thumbData.write(to: stagedThumbURL, options: [.atomic])
+            guard UIImage(contentsOfFile: stagedImageURL.path) != nil, UIImage(contentsOfFile: stagedThumbURL.path) != nil else { throw ReceiptStorageError.imageWrite }
+            if fileManager.fileExists(atPath: imageURL.path) { try fileManager.moveItem(at: imageURL, to: oldImageBackupURL); movedOldImage = true }
+            if fileManager.fileExists(atPath: thumbURL.path) { try fileManager.moveItem(at: thumbURL, to: oldThumbBackupURL); movedOldThumb = true }
+            try fileManager.moveItem(at: stagedImageURL, to: imageURL)
+            try fileManager.moveItem(at: stagedThumbURL, to: thumbURL)
+        } catch {
+            try? fileManager.removeItem(at: stagedImageURL)
+            try? fileManager.removeItem(at: stagedThumbURL)
+            try? fileManager.removeItem(at: imageURL)
+            try? fileManager.removeItem(at: thumbURL)
+            if movedOldImage { try? fileManager.moveItem(at: oldImageBackupURL, to: imageURL) }
+            if movedOldThumb { try? fileManager.moveItem(at: oldThumbBackupURL, to: thumbURL) }
+            throw ReceiptStorageError.imageWrite
+        }
         record.imageFilename = imageName; record.thumbnailFilename = thumbName; record.updatedAt = Date()
-        try persistReceipt(record)
+        do {
+            try persistReceipt(record)
+            try? fileManager.removeItem(at: oldImageBackupURL)
+            try? fileManager.removeItem(at: oldThumbBackupURL)
+        } catch {
+            try? fileManager.removeItem(at: imageURL)
+            try? fileManager.removeItem(at: thumbURL)
+            if movedOldImage { try? fileManager.moveItem(at: oldImageBackupURL, to: imageURL) }
+            if movedOldThumb { try? fileManager.moveItem(at: oldThumbBackupURL, to: thumbURL) }
+            throw error
+        }
         return record
     }
     func rename(receiptID: UUID, newName: String) async throws -> ReceiptRecord {
