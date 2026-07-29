@@ -2,7 +2,7 @@ import SwiftUI
 
 struct CurrencyConverter: View {
     @StateObject private var viewModel: CurrencyConverterViewModel
-    init(context: CurrencyConversionContext? = nil) { _viewModel = StateObject(wrappedValue: CurrencyConverterViewModel(context: context)) }
+    init(context: CurrencyConversionContext? = nil, preferences: UserPreferences = .defaults, repository: CurrencyRateRepository = FileCurrencyRateRepository()) { _viewModel = StateObject(wrappedValue: CurrencyConverterViewModel(context: context, preferences: preferences, persistentRates: repository)) }
     @State private var selector: CurrencySelectorKind?
     @AccessibilityFocusState private var resultFocused: Bool
 

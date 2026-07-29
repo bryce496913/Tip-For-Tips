@@ -32,7 +32,9 @@ struct TipRecommendationEngine {
 
         if service.id == "bar", input.bartenderTipMode == .perDrink {
             let amount = try fixedAmount(for: service, input: input, minimum: 1, standard: 2, maximum: 3)
-            return result(service: service, input: input, now: now, percentage: nil, range: nil, guidance: "$1–$3 per drink", base: baseAmount, normalTip: amount, included: 0, additional: amount, combined: amount, receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: "For individual drinks, a fixed amount per drink can be clearer than a percentage of the tab.")
+            let included = roundedCurrency(includedAmount(input: input, baseAmount: gratuityBaseAmount(input, calculationBase: baseAmount)))
+            let additional = creditIncludedGratuity(normalTip: amount, included: included, input: input)
+            return result(service: service, input: input, now: now, percentage: nil, range: nil, guidance: "$1–$3 per drink", base: baseAmount, normalTip: amount, included: included, additional: additional, combined: roundedCurrency(included + additional), receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: "For individual drinks, a fixed amount per drink can be clearer than a percentage of the tab.")
         }
 
         switch service.recommendation {
@@ -44,7 +46,7 @@ struct TipRecommendationEngine {
                 if count > 0 { recommended = min(maximum + 5, recommended + Decimal(count)); extraReason = " Difficulty factors selected: \(count)." }
             }
             let normalTip = roundedCurrency(baseAmount * recommended / 100)
-            let included = roundedCurrency(includedAmount(input: input, baseAmount: baseAmount))
+            let included = roundedCurrency(includedAmount(input: input, baseAmount: gratuityBaseAmount(input, calculationBase: baseAmount)))
             let additional = additionalTip(normalTip: normalTip, included: included, input: input, quality: input.serviceQuality, maximumTip: roundedCurrency(baseAmount * maximum / 100))
             let combined = roundedCurrency(included + additional)
             let lower = TipAlternative(label: "Lower option", percentage: minimum, amount: roundedCurrency(baseAmount * minimum / 100), explanation: "Lower end of the customary range for this service.")
@@ -53,13 +55,17 @@ struct TipRecommendationEngine {
             return result(service: service, input: input, now: now, percentage: recommended, range: DecimalRange(minimum: minimum, maximum: maximum), guidance: service.recommendationSummary, base: baseAmount, normalTip: normalTip, included: included, additional: additional, combined: combined, receiptTotal: receiptTotal, lower: lower, higher: higher, explanation: explanation(for: service, input: input, included: included, baseAmount: baseAmount, range: "\(minimum)–\(maximum)%", extra: extraReason))
         case let .fixedAmount(minimum, standard, maximum, unitDescription):
             let amount = try fixedAmount(for: service, input: input, minimum: minimum, standard: standard, maximum: maximum)
+            let included = roundedCurrency(includedAmount(input: input, baseAmount: gratuityBaseAmount(input, calculationBase: baseAmount)))
+            let additional = creditIncludedGratuity(normalTip: amount, included: included, input: input)
             let lower = meaningfulAlternative(label: "Lower option", amount: minimum, standard: amount, explanation: unitDescription)
             let higher = meaningfulAlternative(label: "Higher option", amount: maximum, standard: amount, explanation: unitDescription)
-            return result(service: service, input: input, now: now, percentage: nil, range: nil, guidance: service.recommendationSummary, base: baseAmount, normalTip: amount, included: 0, additional: amount, combined: amount, receiptTotal: receiptTotal, lower: lower, higher: higher, explanation: "\(service.explanation) \(unitDescription).")
+            return result(service: service, input: input, now: now, percentage: nil, range: nil, guidance: service.recommendationSummary, base: baseAmount, normalTip: amount, included: included, additional: additional, combined: roundedCurrency(included + additional), receiptTotal: receiptTotal, lower: lower, higher: higher, explanation: "\(service.explanation) \(unitDescription).")
         case let .optional(suggestedPercentage, optionalExplanation):
             let percent = optionalPercentage(suggestedPercentage ?? preferences.defaultTipPercentage, quality: input.serviceQuality)
             let amount = roundedCurrency(baseAmount * percent / 100)
-            return result(service: service, input: input, now: now, percentage: percent, range: nil, guidance: service.recommendationSummary, base: baseAmount, normalTip: amount, included: 0, additional: amount, combined: amount, receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: optionalExplanation)
+            let included = roundedCurrency(includedAmount(input: input, baseAmount: gratuityBaseAmount(input, calculationBase: baseAmount)))
+            let additional = creditIncludedGratuity(normalTip: amount, included: included, input: input)
+            return result(service: service, input: input, now: now, percentage: percent, range: nil, guidance: service.recommendationSummary, base: baseAmount, normalTip: amount, included: included, additional: additional, combined: roundedCurrency(included + additional), receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: optionalExplanation)
         case let .informational(info):
             return result(service: service, input: input, now: now, percentage: nil, range: nil, guidance: info, base: baseAmount, normalTip: 0, included: 0, additional: 0, combined: 0, receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: service.explanation)
         }
@@ -89,7 +95,18 @@ struct TipRecommendationEngine {
                 return derivedSubtotal
             }
         case .finalTotalAfterTax:
-            if let total = input.finalTotal { return total }
+            if let total = input.finalTotal {
+                guard input.finalTotalIncludesIncludedGratuity, input.gratuityStatus == .yes else { return total }
+                let included: Decimal
+                if input.includedGratuityEntryMode == .percentage {
+                    guard let subtotal = input.subtotal, let percentage = input.includedGratuityPercentage else {
+                        throw TipCalculationError.invalidReceiptTotal("Enter the receipt subtotal or gratuity amount so the included gratuity can be calculated correctly.")
+                    }
+                    included = subtotal * percentage / 100
+                } else { included = input.includedGratuityAmount ?? 0 }
+                guard total >= included else { throw TipCalculationError.invalidReceiptTotal("The entered final total is less than the included gratuity already in that total.") }
+                return roundedCurrency(total - included)
+            }
             if let subtotal = input.subtotal { return subtotal + (input.tax ?? 0) }
         }
         throw TipCalculationError.missingBillAmount
@@ -97,13 +114,15 @@ struct TipRecommendationEngine {
     private func currentReceiptTotal(input: TipCalculationInput, baseAmount: Decimal) -> Decimal {
         let subtotal = input.subtotal ?? baseAmount
         let tax = input.tax ?? 0
-        let includedGratuity = includedAmount(input: input, baseAmount: baseAmount)
+        let includedGratuity = includedAmount(input: input, baseAmount: gratuityBaseAmount(input, calculationBase: baseAmount))
         if let enteredFinalTotal = input.finalTotal {
             return input.finalTotalIncludesIncludedGratuity ? enteredFinalTotal : enteredFinalTotal + includedGratuity
         }
         return subtotal + tax + includedGratuity
     }
     private func includedAmount(input: TipCalculationInput, baseAmount: Decimal) -> Decimal { if input.gratuityStatus != .yes { return 0 }; if input.includedGratuityEntryMode == .percentage, let p = input.includedGratuityPercentage { return baseAmount * p / 100 }; return input.includedGratuityAmount ?? 0 }
+    private func gratuityBaseAmount(_ input: TipCalculationInput, calculationBase: Decimal) -> Decimal { input.subtotal ?? calculationBase }
+    private func creditIncludedGratuity(normalTip: Decimal, included: Decimal, input: TipCalculationInput) -> Decimal { input.gratuityStatus == .yes ? max(0, roundedCurrency(normalTip - included)) : normalTip }
     private func additionalTip(normalTip: Decimal, included: Decimal, input: TipCalculationInput, quality: ServiceQuality, maximumTip: Decimal) -> Decimal { guard input.gratuityStatus == .yes else { return normalTip }; if quality == .exceptional, included >= maximumTip { return max(0, normalTip - included) }; return max(0, normalTip - included) }
     private func recommendedPercentage(minimum: Decimal, standard: Decimal, maximum: Decimal, quality: ServiceQuality) -> Decimal { switch quality { case .poor: return max(0, minimum - 3); case .standard: return minimum; case .good: return standard; case .exceptional: return maximum } }
     private func optionalPercentage(_ suggested: Decimal, quality: ServiceQuality) -> Decimal { switch quality { case .poor, .standard: return 0; case .good: return suggested; case .exceptional: return suggested + 5 } }
@@ -126,6 +145,7 @@ struct SplitCalculationEngine {
     func calculate(session: SplitSession, now: Date = Date()) throws -> SplitCalculationResult {
         guard !session.participants.isEmpty else { throw SplitCalculationError.noParticipants }
         guard session.subtotal >= 0, session.tax >= 0, session.tipAmount >= 0, session.total >= 0 else { throw SplitCalculationError.invalidBill("Bill, tax, tip and total must be zero or positive.") }
+        try require(session.tipAmount, equals: session.includedGratuityAmount + session.additionalTipAmount, message: "Combined gratuity must equal included gratuity plus additional tip.")
         let calculatedTotal = session.subtotal + session.tax + session.tipAmount
         try require(calculatedTotal, equals: session.total, message: "Final total must equal subtotal plus tax plus tip before splitting.")
         guard session.total >= session.tax + session.tipAmount else { throw SplitCalculationError.invalidBill("Final total cannot be less than tax plus tip.") }

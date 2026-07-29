@@ -297,8 +297,8 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
         if let subtotal { values.append(ConvertibleAmount(id: "subtotal", label: "Subtotal", amount: subtotal)) }
         if let tax { values.append(ConvertibleAmount(id: "tax", label: "Tax", amount: tax)) }
         if let total { values.append(ConvertibleAmount(id: "total", label: "Total", amount: total)) }
-        let included = detectedCharges.compactMap(\.amount).reduce(Decimal(0), +)
-        if included > 0 { values.append(ConvertibleAmount(id: "included-gratuity", label: "Confirmed gratuity", amount: included)) }
+        let included = detectedCharges.filter { $0.userClassification == .includedGratuity }.compactMap(\.amount).reduce(Decimal(0), +)
+        if included > 0 { values.append(ConvertibleAmount(id: "included-gratuity", label: "Included gratuity", amount: included)) }
         return values
     }
 
@@ -323,18 +323,24 @@ struct SplitCalculatorContext: Hashable, Codable {
     var additionalTipAmount: Decimal?
     var total: Decimal?
     var suggestedPeopleCount: Int?
+    var handoffValidationMessage: String? = nil
 
     var combinedTipAndGratuity: Decimal { (includedGratuityAmount ?? 0) + (additionalTipAmount ?? 0) }
 
-    static let manual = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: nil, tax: nil, includedGratuityAmount: nil, additionalTipAmount: nil, total: nil, suggestedPeopleCount: nil)
+    static let manual = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: nil, tax: nil, includedGratuityAmount: nil, additionalTipAmount: nil, total: nil, suggestedPeopleCount: nil, handoffValidationMessage: nil)
 
     static func tipResult(_ result: TipCalculationResult, sourceCalculationID: UUID? = nil) -> SplitCalculatorContext {
-        SplitCalculatorContext(sourceCalculationID: sourceCalculationID, receiptID: nil, currencyCode: result.input.currencyCode, subtotal: result.input.subtotal ?? result.baseBillAmount, tax: result.input.tax, includedGratuityAmount: result.includedGratuityAmount, additionalTipAmount: result.suggestedAdditionalTip, total: result.finalTotal, suggestedPeopleCount: result.input.peopleCount)
+        SplitCalculatorContext(sourceCalculationID: sourceCalculationID, receiptID: nil, currencyCode: result.input.currencyCode, subtotal: result.input.subtotal ?? result.baseBillAmount, tax: result.input.tax, includedGratuityAmount: result.includedGratuityAmount, additionalTipAmount: result.suggestedAdditionalTip, total: result.finalTotal, suggestedPeopleCount: result.input.peopleCount, handoffValidationMessage: nil)
     }
 
     static func receipt(_ receipt: ReceiptRecord) -> SplitCalculatorContext {
-        let included = receipt.detectedCharges.filter { [.includedGratuity, .automaticGratuity].contains($0.kind) || $0.userClassification == .includedGratuity }.compactMap(\.amount).reduce(Decimal(0), +)
-        return SplitCalculatorContext(sourceCalculationID: nil, receiptID: receipt.id, currencyCode: receipt.currencyCode, subtotal: receipt.subtotal, tax: receipt.tax, includedGratuityAmount: included == 0 ? nil : included, additionalTipAmount: nil, total: receipt.total, suggestedPeopleCount: nil)
+        let included = receipt.detectedCharges.filter { $0.userClassification == .includedGratuity }.reduce(Decimal(0)) { total, charge in
+            if let amount = charge.amount { return total + amount }
+            if let percentage = charge.percentage, let subtotal = receipt.subtotal { return total + subtotal * percentage / 100 }
+            return total
+        }.currencyRounded
+        let unresolved = receipt.subtotal == nil && receipt.detectedCharges.contains { $0.userClassification == .includedGratuity && $0.amount == nil && $0.percentage != nil }
+        return SplitCalculatorContext(sourceCalculationID: nil, receiptID: receipt.id, currencyCode: receipt.currencyCode, subtotal: receipt.subtotal, tax: receipt.tax, includedGratuityAmount: included == 0 ? nil : included, additionalTipAmount: nil, total: receipt.total, suggestedPeopleCount: nil, handoffValidationMessage: unresolved ? "Enter the receipt subtotal or gratuity amount so the included gratuity can be carried into the split correctly." : nil)
     }
 }
 
@@ -456,11 +462,16 @@ struct UserPreferences: Codable, Hashable {
 extension UserPreferences {
     var validated: UserPreferences {
         var copy = self
-        if Locale.commonISOCurrencyCodes.contains(copy.homeCurrencyCode) == false { copy.homeCurrencyCode = Self.defaults.homeCurrencyCode }
+        // Preserve unsupported persisted values so Settings can disclose them and ask
+        // the user to choose a provider-supported replacement; never silently use USD.
         if copy.defaultTipPercentage < 0 || copy.defaultTipPercentage > 100 { copy.defaultTipPercentage = Self.defaults.defaultTipPercentage }
         if copy.defaultPeopleCount < 1 { copy.defaultPeopleCount = Self.defaults.defaultPeopleCount }
         return copy
     }
+}
+
+extension Decimal {
+    var currencyRounded: Decimal { var source = self; var result = Decimal(); NSDecimalRound(&result, &source, 2, .plain); return result }
 }
 
 
