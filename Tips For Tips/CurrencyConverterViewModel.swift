@@ -37,13 +37,14 @@ struct ConversionResult: Equatable {
 struct CachedExchangeRate: Equatable { let rate: Decimal; let rateDate: Date?; let fetchedAt: Date }
 
 enum CurrencyConverterError: LocalizedError, Equatable {
-    case invalidAmount, unsupportedCurrency, invalidResponse, missingRate, authentication, network, decoding
+    case invalidAmount, unsupportedCurrency, invalidResponse, missingRate, authentication, network, decoding, noSavedRate
     var errorDescription: String? {
         switch self {
         case .invalidAmount: return "Enter a positive amount to convert."
         case .unsupportedCurrency: return "That currency is not supported by the exchange-rate provider."
         case .invalidResponse, .missingRate, .decoding, .network: return "Unable to load the latest exchange rate. Check your connection and try again."
         case .authentication: return "The exchange-rate provider rejected this request."
+        case .noSavedRate: return "No saved rate is available for this currency pair. Connect to the internet and try again."
         }
     }
 }
@@ -88,11 +89,12 @@ final class CurrencyConverterViewModel: ObservableObject {
 
     var currencies: [Currency] { sortedCurrencies() }
     private let service: CurrencyRateProviding
+    private let persistentRates: CurrencyRateRepository
     private var conversionTask: Task<Void, Never>?
     private var activeRequestID = UUID()
     private var cache: [String: CachedExchangeRate] = [:]
 
-    init(service: CurrencyRateProviding = ExchangeRateService(), context: CurrencyConversionContext? = nil) { self.service = service; if let context { sourceCurrency = Currency.currency(for: context.sourceCurrencyCode); contextValues = context.values; amountText = context.values.first.map { "\($0.amount)" } ?? "" } }
+    init(service: CurrencyRateProviding = ExchangeRateService(), context: CurrencyConversionContext? = nil, preferences: UserPreferences = .defaults, persistentRates: CurrencyRateRepository = FileCurrencyRateRepository()) { self.service = service; self.persistentRates = persistentRates; if FrankfurterSupportedCurrencies.codes.contains(preferences.homeCurrencyCode) { destinationCurrency = Currency.currency(for: preferences.homeCurrencyCode) }; if let context { sourceCurrency = Currency.currency(for: context.sourceCurrencyCode); contextValues = context.values; amountText = context.values.first.map { "\($0.amount)" } ?? "" } }
     var parsedAmount: Decimal? { Self.parseAmount(amountText) }
     var canConvert: Bool { if case .loading = state { return false }; guard let amount = parsedAmount else { return false }; return amount > 0 }
 
@@ -121,15 +123,25 @@ final class CurrencyConverterViewModel: ObservableObject {
         let requestID = UUID(); activeRequestID = requestID
         let from = sourceCurrency, to = destinationCurrency, key = "\(from.code)-\(to.code)", amountSnapshot = amountText
         state = .loading; result = nil
-        conversionTask = Task { [service] in
+        conversionTask = Task { [service, persistentRates] in
             do {
-                let cachedEntry = cache[key]
+                let memoryEntry = cache[key]
+                let stored = try? await persistentRates.cachedRate(from: from.code, to: to.code)
+                let persistentEntry = stored.map { CachedExchangeRate(rate: $0.rate, rateDate: $0.rateDate, fetchedAt: $0.fetchedAt) }
+                let cachedEntry = memoryEntry ?? persistentEntry
                 let rate: Decimal; let rateDate: Date?; let fetchedAt: Date; let cached: Bool
                 if from.code == to.code { rate = 1; rateDate = nil; fetchedAt = Date(); cached = false }
                 else if let c = cachedEntry, Date().timeIntervalSince(c.fetchedAt) < Self.cacheFreshnessInterval { rate = c.rate; rateDate = c.rateDate; fetchedAt = c.fetchedAt; cached = true }
-                else { let fresh = try await service.rate(from: from, to: to); rate = fresh.0; rateDate = fresh.1; fetchedAt = Date(); cached = false }
+                else {
+                    do { let fresh = try await service.rate(from: from, to: to); rate = fresh.0; rateDate = fresh.1; fetchedAt = Date(); cached = false }
+                    catch { guard let fallback = cachedEntry else { throw CurrencyConverterError.noSavedRate }; rate = fallback.rate; rateDate = fallback.rateDate; fetchedAt = fallback.fetchedAt; cached = true }
+                }
                 guard !Task.isCancelled, requestID == activeRequestID, amountText == amountSnapshot, sourceCurrency == from, destinationCurrency == to else { return }
-                if !cached && from.code != to.code { cache[key] = CachedExchangeRate(rate: rate, rateDate: rateDate, fetchedAt: fetchedAt) }
+                if !cached && from.code != to.code {
+                    cache[key] = CachedExchangeRate(rate: rate, rateDate: rateDate, fetchedAt: fetchedAt)
+                    let snapshot = CurrencyConversionSnapshot(sourceCurrencyCode: from.code, destinationCurrencyCode: to.code, billAmount: amount, tipAmount: 0, totalAmount: amount, convertedBillAmount: amount * rate, convertedTipAmount: 0, convertedTotalAmount: amount * rate, rate: rate, rateDate: rateDate, fetchedAt: fetchedAt, usedCachedRate: false)
+                    try? await persistentRates.saveRateSnapshot(snapshot)
+                }
                 let values = contextValues.isEmpty ? [ConvertibleAmount(id: "amount", label: "Amount", amount: amount)] : contextValues
                 multiValueLines = values.map { MultiValueConversionLine(id: $0.id, label: $0.label, sourceAmount: $0.amount, convertedAmount: $0.amount * rate) }
                 result = ConversionResult(enteredAmount: amount, convertedAmount: amount * rate, rate: rate, from: from, to: to, rateDate: rateDate, fetchedAt: fetchedAt, isCached: cached)

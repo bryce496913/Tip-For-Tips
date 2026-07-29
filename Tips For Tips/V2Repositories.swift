@@ -39,12 +39,16 @@ enum V2PersistenceError: LocalizedError {
     case readFailed
     case writeFailed
     case migrationFailed(String)
+    case unsupportedSchema(found: Int, supported: Int)
+    case corruptEnvelope
 
     var errorDescription: String? {
         switch self {
         case .readFailed: return "Saved app data could not be read."
         case .writeFailed: return "Saved app data could not be written."
         case .migrationFailed(let message): return "Some V1 data could not be migrated: \(message)"
+        case .unsupportedSchema(let found, let supported): return "Saved data uses schema version \(found), but this app supports version \(supported)."
+        case .corruptEnvelope: return "Saved data is corrupt and could not be decoded."
         }
     }
 }
@@ -81,8 +85,15 @@ actor CodableFileStore<Record: Codable & Identifiable> where Record.ID: Hashable
 
     func load(version: Int) throws -> [Record] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
-        do { return try decoder.decode(StoredDataEnvelope<Record>.self, from: Data(contentsOf: fileURL)).records }
-        catch { throw V2PersistenceError.readFailed }
+        do {
+            let envelope = try decoder.decode(StoredDataEnvelope<Record>.self, from: Data(contentsOf: fileURL))
+            guard envelope.version <= version else { throw V2PersistenceError.unsupportedSchema(found: envelope.version, supported: version) }
+            // Version 1 and 2 envelopes have the same generic record representation;
+            // accepting v1 here is the explicit lossless migration to the current model.
+            guard envelope.version == version || envelope.version == 1 else { throw V2PersistenceError.unsupportedSchema(found: envelope.version, supported: version) }
+            return envelope.records
+        } catch let error as V2PersistenceError { throw error }
+        catch { throw V2PersistenceError.corruptEnvelope }
     }
 
     func save(_ records: [Record], version: Int) throws {
@@ -139,7 +150,11 @@ actor V2MigrationCoordinator {
         var migratedReceipts = 0
         var migratedNotes = 0
 
-        do { try backupLegacyFileIfPresent(named: "receipts.json"); migratedReceipts = try await migrateLegacyReceiptsMetadata() }
+        do {
+            try backupLegacyFileIfPresent(named: "receipts.json")
+            migratedReceipts += try await migrateRootLegacyReceipts()
+            migratedReceipts += try await migrateLegacyReceiptsMetadata()
+        }
         catch { failures.append("Receipts: \(error.localizedDescription)") }
 
         do { try backupLegacyFileIfPresent(named: "notes.json"); migratedNotes = try await migrateLegacyNotes() }
@@ -187,6 +202,42 @@ actor V2MigrationCoordinator {
         let additions = records.filter { !existingIDs.contains($0.id) }
         try await target.save(existing + additions, version: Self.currentVersion)
         return additions.count
+    }
+
+    /// Imports the original released V1 `Receipt` model: an unwrapped JSON array
+    /// containing `id`, PNG `imageData`, and `name`.
+    private func migrateRootLegacyReceipts() async throws -> Int {
+        let legacyURL = rootURL.appendingPathComponent("receipts.json")
+        guard fileManager.fileExists(atPath: legacyURL.path) else { return 0 }
+        struct RootV1Receipt: Decodable { let id: UUID?; let imageData: Data?; let name: String
+            enum CodingKeys: String, CodingKey { case id, imageData, name }
+            init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); id = try? c.decode(UUID.self, forKey: .id); imageData = try? c.decode(Data.self, forKey: .imageData); name = try c.decode(String.self, forKey: .name) }
+        }
+        let source = try JSONDecoder().decode([RootV1Receipt].self, from: Data(contentsOf: legacyURL))
+        let repository = FileReceiptRepository(rootURL: rootURL, fileManager: fileManager)
+        var existingIDs = Set(try await repository.fetchReceipts().map(\.id))
+        let fileDate = ((try? fileManager.attributesOfItem(atPath: legacyURL.path)[.modificationDate]) as? Date) ?? Date()
+        var migrated = 0
+        for (index, legacy) in source.enumerated() {
+            let id = legacy.id ?? deterministicLegacyReceiptID(name: legacy.name, index: index)
+            guard existingIDs.insert(id).inserted else { continue }
+            let record = ReceiptRecord(id: id, merchantName: legacy.name.nilIfBlank, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: fileDate, updatedAt: fileDate)
+            if let data = legacy.imageData, let image = UIImage(data: data) {
+                _ = try await repository.create(draft: record, fullImage: image, thumbnail: image.resizedForReceipt(maxDimension: 420))
+            } else { try await repository.createMetadataOnly(draft: record) }
+            guard let verified = try await repository.receipt(id: id), verified.id == id else { throw V2PersistenceError.migrationFailed("A root-level receipt could not be verified.") }
+            migrated += 1
+        }
+        return migrated
+    }
+
+    private func deterministicLegacyReceiptID(name: String, index: Int) -> UUID {
+        let bytes = Array("tips-for-tips-v1|\(index)|\(name)".utf8)
+        var a: UInt64 = 0xcbf29ce484222325, b: UInt64 = 0x84222325cbf29ce4
+        for byte in bytes { a = (a ^ UInt64(byte)) &* 0x100000001b3; b = (b ^ UInt64(byte &+ 31)) &* 0x100000001b3 }
+        var raw = withUnsafeBytes(of: a.bigEndian, Array.init) + withUnsafeBytes(of: b.bigEndian, Array.init)
+        raw[6] = (raw[6] & 0x0f) | 0x50; raw[8] = (raw[8] & 0x3f) | 0x80
+        return UUID(uuid: (raw[0],raw[1],raw[2],raw[3],raw[4],raw[5],raw[6],raw[7],raw[8],raw[9],raw[10],raw[11],raw[12],raw[13],raw[14],raw[15]))
     }
 
     private func migrateLegacyNotes() async throws -> Int {
@@ -246,9 +297,25 @@ actor FileReceiptRepository: ReceiptRepository {
         guard let fullData = fullImage.jpegData(compressionQuality: 0.82), let thumbData = thumbnail.jpegData(compressionQuality: 0.78) else { throw ReceiptStorageError.conversion }
         let imageURL = try validatedURL(filename: imageName, in: imagesDir)
         let thumbURL = try validatedURL(filename: thumbName, in: thumbsDir)
-        do { try fullData.write(to: imageURL, options: [.atomic]); try thumbData.write(to: thumbURL, options: [.atomic]) } catch { throw ReceiptStorageError.imageWrite }
+        let token = UUID().uuidString
+        let stagedImageURL = temporaryDir.appendingPathComponent("create-\(token)-\(imageName)")
+        let stagedThumbURL = temporaryDir.appendingPathComponent("create-\(token)-\(thumbName)")
         var record = draft; record.imageFilename = imageName; record.thumbnailFilename = thumbName
-        do { try persistReceipt(record); return record } catch { try? fileManager.removeItem(at: imageURL); try? fileManager.removeItem(at: thumbURL); throw error }
+        do {
+            try fullData.write(to: stagedImageURL, options: [.atomic]); try thumbData.write(to: stagedThumbURL, options: [.atomic])
+            guard UIImage(contentsOfFile: stagedImageURL.path) != nil, UIImage(contentsOfFile: stagedThumbURL.path) != nil else { throw ReceiptStorageError.imageWrite }
+            // Refuse to overwrite an existing receipt's images during creation.
+            guard !fileManager.fileExists(atPath: imageURL.path), !fileManager.fileExists(atPath: thumbURL.path) else { throw ReceiptStorageError.imageWrite }
+            _ = try loadRecords() // validate existing metadata before final file moves
+            try fileManager.moveItem(at: stagedImageURL, to: imageURL)
+            try fileManager.moveItem(at: stagedThumbURL, to: thumbURL)
+            try persistReceipt(record)
+            return record
+        } catch {
+            try? fileManager.removeItem(at: stagedImageURL); try? fileManager.removeItem(at: stagedThumbURL)
+            try? fileManager.removeItem(at: imageURL); try? fileManager.removeItem(at: thumbURL)
+            throw error
+        }
     }
     func createMetadataOnly(draft: ReceiptRecord) async throws { var record = draft; record.imageFilename = nil; record.thumbnailFilename = nil; try ensureDirectories(); try persistReceipt(record) }
     func saveReceipt(_ receipt: ReceiptRecord) async throws { try persistReceipt(receipt) }

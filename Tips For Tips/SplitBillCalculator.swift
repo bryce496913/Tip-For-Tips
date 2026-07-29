@@ -1,5 +1,16 @@
 import SwiftUI
 
+struct SplitBillInputState: Equatable {
+    var subtotalText = ""
+    var taxText = ""
+    var tipText = ""
+    var parsedSubtotal: Decimal?
+    var parsedTax: Decimal?
+    var parsedTip: Decimal?
+    var validationErrors: [BillSummaryField: String] = [:]
+    var isValid = false
+}
+
 @MainActor
 final class SplitBillViewModel: ObservableObject {
     @Published var session: SplitSession
@@ -8,6 +19,7 @@ final class SplitBillViewModel: ObservableObject {
     @Published var saveMessage: String?
     @Published var isSaving = false
     @Published var hasUnsavedChanges = true
+    @Published private(set) var billInput = SplitBillInputState()
     private let engine = SplitCalculationEngine()
     private let repository: CalculationRepository
 
@@ -18,10 +30,28 @@ final class SplitBillViewModel: ObservableObject {
         let subtotal = context.subtotal ?? max(0, (context.total ?? 0) - (context.tax ?? 0) - combinedGratuity)
         let calculatedTotal = subtotal + (context.tax ?? 0) + combinedGratuity
         session = SplitSession(id: UUID(), name: "Bill Split", mode: .equal, currencyCode: context.currencyCode, subtotal: subtotal, tax: context.tax ?? 0, tipAmount: combinedGratuity, includedGratuityAmount: context.includedGratuityAmount ?? 0, additionalTipAmount: context.additionalTipAmount ?? 0, total: context.total ?? calculatedTotal, participants: (1...count).map { SplitParticipant(name: "Person \($0)") }, items: [SplitItem(name: "Item", price: subtotal)], taxAllocationMode: .proportional, tipAllocationMode: .proportional, roundingRule: SplitRoundingRule(preference: preferences.roundingPreference), sourceCalculationID: context.sourceCalculationID, receiptID: context.receiptID, createdAt: Date(), updatedAt: Date())
+        billInput = SplitBillInputState(subtotalText: context.subtotal.map(String.init(describing:)) ?? "", taxText: context.tax.map(String.init(describing:)) ?? "", tipText: combinedGratuity == 0 ? "" : String(describing: combinedGratuity), parsedSubtotal: context.subtotal, parsedTax: context.tax ?? 0, parsedTip: combinedGratuity, validationErrors: [:], isValid: context.subtotal != nil)
         recalculate(preserveSuppliedTotal: context.total != nil)
+        if let message = context.handoffValidationMessage { billInput.isValid = false; result = nil; validationMessage = message }
     }
 
-    func recalculate(preserveSuppliedTotal: Bool = false) { saveMessage = nil; hasUnsavedChanges = true; do { if !preserveSuppliedTotal { session.total = session.subtotal + session.tax + session.tipAmount }; session.updatedAt = Date(); result = try engine.calculate(session: session); validationMessage = nil } catch { result = nil; validationMessage = error.localizedDescription } }
+    func updateBillInputs(subtotalText: String, taxText: String, tipText: String, locale: Locale = .current) {
+        let subtotal = BillSummaryParser.parseRequired(subtotalText, locale: locale)
+        let tax = BillSummaryParser.parseOptional(taxText, locale: locale)
+        let tip = BillSummaryParser.parseOptional(tipText, locale: locale)
+        var errors: [BillSummaryField: String] = [:]
+        if subtotal == nil { errors[.subtotal] = "Enter a valid subtotal." }
+        if tax == nil { errors[.tax] = "Enter a valid tax amount." }
+        if tip == nil { errors[.tip] = "Enter a valid combined gratuity." }
+        if let tip, tip < session.includedGratuityAmount { errors[.tip] = "The combined gratuity cannot be less than the gratuity already included on the receipt." }
+        billInput = SplitBillInputState(subtotalText: subtotalText, taxText: taxText, tipText: tipText, parsedSubtotal: subtotal, parsedTax: tax, parsedTip: tip, validationErrors: errors, isValid: errors.isEmpty)
+        guard billInput.isValid, let subtotal, let tax, let tip else { result = nil; validationMessage = errors.values.first; return }
+        session.subtotal = subtotal; session.tax = tax; session.tipAmount = tip
+        session.additionalTipAmount = tip - session.includedGratuityAmount
+        recalculate()
+    }
+
+    func recalculate(preserveSuppliedTotal: Bool = false) { guard billInput.isValid else { result = nil; return }; saveMessage = nil; hasUnsavedChanges = true; do { if !preserveSuppliedTotal { session.total = session.subtotal + session.tax + session.tipAmount }; session.updatedAt = Date(); result = try engine.calculate(session: session); validationMessage = nil } catch { result = nil; validationMessage = error.localizedDescription } }
     func setMode(_ mode: SplitMode) { session.mode = mode; if mode == .percentage { splitEvenlyPercentages() }; recalculate() }
     func addParticipant() { session.participants.append(SplitParticipant(name: "Person \(session.participants.count + 1)")); if session.mode == .percentage { splitEvenlyPercentages() }; recalculate() }
     func deleteParticipant(_ id: UUID) { guard session.participants.count > 1 else { validationMessage = "Keep at least one participant."; return }; session.participants.removeAll { $0.id == id }; session.items = session.items.map { item in var i = item; i.assignments.removeAll { $0.participantID == id }; return i }; if session.mode == .percentage { splitEvenlyPercentages() }; recalculate() }
@@ -35,8 +65,8 @@ final class SplitBillViewModel: ObservableObject {
     func shareItemWithEveryone(_ itemID: UUID) { guard let i = session.items.firstIndex(where: { $0.id == itemID }), !session.participants.isEmpty else { return }; let share = Decimal(1) / Decimal(session.participants.count); session.items[i].assignments = session.participants.map { SplitItemAssignment(participantID: $0.id, share: share) }; session.items[i].sharingRule = .sharedByEveryone; recalculate() }
     func save() async { guard !isSaving else { return }; guard let result else { validationMessage = "Complete the split before saving."; return }; isSaving = true; defer { isSaving = false }; do { let record = SavedCalculationRecord(id: session.id, recordType: .split, tipResult: nil, splitResult: result, receiptID: session.receiptID, merchantName: nil, notes: session.name, currencyConversion: nil, shareSummary: shareSummary, createdAt: session.createdAt, updatedAt: Date()); try await repository.saveCalculation(record); saveMessage = "Split saved."; hasUnsavedChanges = false } catch { saveMessage = "Could not save split." } }
     var shareSummary: String { guard let result else { return "" }; return (["Tips for Tips — Bill Split", "", "Restaurant total: \(money(result.originalTotal))", "Rounded payments: \(money(result.roundedCollectedTotal))", "Rounding difference: \(money(result.roundingDifference))", ""] + result.participantResults.map { "\($0.participantName): \(money($0.finalAmount)) — \($0.isPaid ? "Paid" : "Unpaid")" } + ["", "Tax included: \(money(session.tax))", "Tip included: \(money(session.tipAmount))"]).joined(separator: "\n") }
-    var canSave: Bool { result != nil && !isSaving }
-    var canShare: Bool { result != nil }
+    var canSave: Bool { billInput.isValid && result != nil && !isSaving }
+    var canShare: Bool { billInput.isValid && result != nil }
     var canMarkAllPaid: Bool { result != nil && session.participants.contains { !$0.isPaid } }
     var canResetPaid: Bool { session.participants.contains { $0.isPaid } }
     func money(_ value: Decimal) -> String { formatMoney(value, code: session.currencyCode) }
@@ -69,12 +99,14 @@ struct SplitBillCalculator: View {
     @State private var attemptedBillEdit = false
     @FocusState private var focusedField: BillSummaryField?
 
-    init(context: SplitCalculatorContext = .manual) {
-        let vm = SplitBillViewModel(context: context)
+    init(context: SplitCalculatorContext = .manual, preferences: UserPreferences = .defaults) {
+        var resolvedContext = context
+        if context == .manual { resolvedContext.currencyCode = preferences.homeCurrencyCode }
+        let vm = SplitBillViewModel(context: resolvedContext, preferences: preferences)
         _model = StateObject(wrappedValue: vm)
-        _subtotalText = State(initialValue: vm.session.subtotal == 0 ? "" : "\(vm.session.subtotal)")
-        _taxText = State(initialValue: vm.session.tax == 0 ? "" : "\(vm.session.tax)")
-        _tipText = State(initialValue: vm.session.tipAmount == 0 ? "" : "\(vm.session.tipAmount)")
+        _subtotalText = State(initialValue: vm.billInput.subtotalText)
+        _taxText = State(initialValue: vm.billInput.taxText)
+        _tipText = State(initialValue: vm.billInput.tipText)
     }
 
     var body: some View {
@@ -90,7 +122,9 @@ struct SplitBillCalculator: View {
             Text("Enter the receipt subtotal, tax, and tip. The final total is calculated automatically.").appFont(.body).foregroundStyle(AppTheme.secondaryText)
             LabeledCurrencyField(title: "Subtotal", text: $subtotalText, currencyCode: model.session.currencyCode, isRequired: true, errorMessage: subtotalError, focusedField: $focusedField, field: .subtotal) { applyBillInputs() }
             LabeledCurrencyField(title: "Tax", text: $taxText, currencyCode: model.session.currencyCode, helpText: "Optional; leave blank for zero.", errorMessage: taxError, focusedField: $focusedField, field: .tax) { applyBillInputs() }
-            LabeledCurrencyField(title: "Tip", text: $tipText, currencyCode: model.session.currencyCode, helpText: "Optional; leave blank for zero.", errorMessage: tipError, focusedField: $focusedField, field: .tip) { applyBillInputs() }
+            if model.session.includedGratuityAmount > 0 { ResultSummaryRow(label: "Included gratuity", value: model.money(model.session.includedGratuityAmount)) }
+            LabeledCurrencyField(title: model.session.includedGratuityAmount > 0 ? "Combined gratuity and tip" : "Tip", text: $tipText, currencyCode: model.session.currencyCode, helpText: "Optional; leave blank for zero.", errorMessage: tipError, focusedField: $focusedField, field: .tip) { applyBillInputs() }
+            if model.session.includedGratuityAmount > 0 { ResultSummaryRow(label: "Additional tip", value: model.money(model.session.additionalTipAmount)) }
             VStack(alignment: .leading, spacing: AppSpacing.small) {
                 Text("Calculated final total").appFont(.subheadline).foregroundStyle(AppTheme.secondaryText)
                 Text(calculatedTotalText).font(.system(.title2, design: .rounded, weight: .bold)).monospacedDigit().foregroundStyle(AppTheme.text)
@@ -101,10 +135,10 @@ struct SplitBillCalculator: View {
 
     private var subtotalError: String? { attemptedBillEdit && BillSummaryParser.parseRequired(subtotalText) == nil ? (subtotalText.contains("-") ? "Subtotal cannot be negative." : "Enter a valid subtotal.") : nil }
     private var taxError: String? { attemptedBillEdit && BillSummaryParser.parseOptional(taxText) == nil ? "Tax cannot be negative." : nil }
-    private var tipError: String? { attemptedBillEdit && BillSummaryParser.parseOptional(tipText) == nil ? "Tip cannot be negative." : nil }
+    private var tipError: String? { attemptedBillEdit ? model.billInput.validationErrors[.tip] : nil }
     private var calculatedTotalText: String { guard let subtotal = BillSummaryParser.parseRequired(subtotalText), let tax = BillSummaryParser.parseOptional(taxText), let tip = BillSummaryParser.parseOptional(tipText) else { return "—" }; return model.money(subtotal + tax + tip) }
 
-    private func applyBillInputs() { attemptedBillEdit = true; guard let subtotal = BillSummaryParser.parseRequired(subtotalText), let tax = BillSummaryParser.parseOptional(taxText), let tip = BillSummaryParser.parseOptional(tipText) else { model.result = nil; return }; model.session.subtotal = subtotal; model.session.tax = tax; model.session.tipAmount = tip; model.recalculate() }
+    private func applyBillInputs() { attemptedBillEdit = true; model.updateBillInputs(subtotalText: subtotalText, taxText: taxText, tipText: tipText) }
     private func moveFocus(_ delta: Int) { let fields: [BillSummaryField] = [.subtotal, .tax, .tip]; guard let current = focusedField, let index = fields.firstIndex(of: current) else { return }; focusedField = fields[min(max(index + delta, 0), fields.count - 1)] }
     private var modeSelector: some View { ScrollView(.horizontal, showsIndicators: false) { HStack { ForEach(SplitMode.allCases) { mode in Button { model.setMode(mode) } label: { Label(mode.title, systemImage: model.session.mode == mode ? "checkmark.circle.fill" : "circle").padding(12).background(model.session.mode == mode ? AppTheme.accent : AppTheme.surface).clipShape(RoundedRectangle(cornerRadius: 14)) }.accessibilityLabel("\(mode.title) mode").accessibilityValue(model.session.mode == mode ? "Selected" : "Not selected") } } } }
     @ViewBuilder private var modeBody: some View { ParticipantsCard(model: model); switch model.session.mode { case .equal: ThemedCard { Text("Equal split stays simple: enter the total and participant count. Remainder cents are distributed deterministically so totals are preserved.").appFont(.body) }; case .customAmount: CustomAmountCard(model: model); case .percentage: PercentageCard(model: model); case .itemized: ItemizedCard(model: model) } }
