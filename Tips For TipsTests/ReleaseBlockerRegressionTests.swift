@@ -2,6 +2,34 @@ import XCTest
 @testable import Tips_For_Tips
 
 final class ReleaseBlockerRegressionTests: XCTestCase {
+    @MainActor
+    func testSplitHandoffPreservesIncludedAndAdditionalGratuity() throws {
+        var input = TipCalculationInput.defaults()
+        input.subtotal = 100; input.tax = 8; input.gratuityStatus = .yes
+        input.includedGratuityEntryMode = .amount; input.includedGratuityAmount = 18
+        input.serviceQuality = .poor
+        let tipResult = try TipRecommendationEngine().calculate(input: input)
+        let context = SplitCalculatorContext.tipResult(tipResult)
+        let model = SplitBillViewModel(context: context)
+
+        XCTAssertEqual(context.includedGratuityAmount, 18)
+        XCTAssertEqual(context.additionalTipAmount, 0)
+        XCTAssertEqual(model.session.tipAmount, 18)
+        XCTAssertEqual(model.session.total, 126)
+        XCTAssertEqual(model.result?.participantResults.reduce(Decimal(0)) { $0 + $1.finalAmount }, 126)
+    }
+
+    @MainActor
+    func testSplitHandoffBlocksAnUnreconciledSuppliedTotal() {
+        let context = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: 100, tax: 8, includedGratuityAmount: 18, additionalTipAmount: 2, total: 129, suggestedPeopleCount: 2)
+        let model = SplitBillViewModel(context: context)
+        XCTAssertEqual(model.session.total, 129)
+        XCTAssertNil(model.result)
+        XCTAssertNotNil(model.validationMessage)
+        XCTAssertFalse(model.canSave)
+        XCTAssertFalse(model.canShare)
+    }
+
     func testIncludedGratuityReceiptTotals() throws {
         var input = TipCalculationInput.defaults()
         input.serviceID = "restaurant"
@@ -65,7 +93,8 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
     func testReceiptRepositoryCanonicalPathAndCorruptMetadataBackup() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = FileReceiptRepository(rootURL: root)
-        XCTAssertEqual(try await repo.fetchReceipts(), [])
+        let initiallyStoredReceipts = try await repo.fetchReceipts()
+        XCTAssertEqual(initiallyStoredReceipts, [])
         let metadata = root.appendingPathComponent("V2/Receipts/receipts.json")
         try FileManager.default.createDirectory(at: metadata.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: metadata)

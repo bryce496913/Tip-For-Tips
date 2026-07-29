@@ -171,18 +171,48 @@ actor V2MigrationCoordinator {
         struct LegacyReceipt: Codable { var id: UUID; var name: String; var imageFilename: String; var thumbnailFilename: String?; var createdAt: Date; var updatedAt: Date }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let envelope = try decoder.decode(StoredDataEnvelope<LegacyReceipt>.self, from: Data(contentsOf: legacyURL))
-        let records = envelope.records.map { legacy in
-            ReceiptRecord(id: legacy.id, merchantName: legacy.name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: legacy.imageFilename, thumbnailFilename: legacy.thumbnailFilename, notes: "", createdAt: legacy.createdAt, updatedAt: legacy.updatedAt)
+        let destinationImages = rootURL.appendingPathComponent("V2/Receipts/Images", isDirectory: true)
+        let destinationThumbnails = rootURL.appendingPathComponent("V2/Receipts/Thumbnails", isDirectory: true)
+        try fileManager.createDirectory(at: destinationImages, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destinationThumbnails, withIntermediateDirectories: true)
+        var records: [ReceiptRecord] = []
+        for legacy in envelope.records {
+            let imageName = try copyLegacyImage(named: legacy.imageFilename, from: rootURL.appendingPathComponent("Receipts/Images"), to: destinationImages)
+            let thumbnailName = try legacy.thumbnailFilename.flatMap { try copyLegacyImage(named: $0, from: rootURL.appendingPathComponent("Receipts/Thumbnails"), to: destinationThumbnails) }
+            records.append(ReceiptRecord(id: legacy.id, merchantName: legacy.name, receiptDate: nil, subtotal: nil, tax: nil, total: nil, detectedCharges: [], imageFilename: imageName, thumbnailFilename: thumbnailName, notes: "", createdAt: legacy.createdAt, updatedAt: legacy.updatedAt))
         }
         let target = CodableFileStore<ReceiptRecord>(fileURL: rootURL.appendingPathComponent("V2/Receipts/receipts.json"))
-        try await target.save(records, version: Self.currentVersion)
-        return records.count
+        let existing = try await target.load(version: Self.currentVersion)
+        let existingIDs = Set(existing.map(\.id))
+        let additions = records.filter { !existingIDs.contains($0.id) }
+        try await target.save(existing + additions, version: Self.currentVersion)
+        return additions.count
     }
 
     private func migrateLegacyNotes() async throws -> Int {
-        let legacyURL = rootURL.appendingPathComponent("notes.json")
-        guard fileManager.fileExists(atPath: legacyURL.path) else { return 0 }
-        return 0
+        let formatter = DateFormatter(); formatter.dateFormat = "dd MM yyyy HH:mm"; formatter.locale = Locale(identifier: "en_US_POSIX")
+        let candidates = try fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil).filter { $0.pathExtension == "txt" && formatter.date(from: $0.deletingPathExtension().lastPathComponent) != nil }
+        guard !candidates.isEmpty else { return 0 }
+        let notesURL = rootURL.appendingPathComponent("Notes/notes.json")
+        let before: Int
+        if fileManager.fileExists(atPath: notesURL.path) {
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            before = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)).records.count
+        } else { before = 0 }
+        let after = try await NoteStore(rootURL: rootURL).loadNotes().count
+        guard after >= before + candidates.count else { throw V2PersistenceError.migrationFailed("Not all legacy notes were verified.") }
+        return after - before
+    }
+
+    private func copyLegacyImage(named filename: String, from sourceDirectory: URL, to destinationDirectory: URL) throws -> String? {
+        let safeName = (filename as NSString).lastPathComponent
+        guard safeName == filename, !safeName.isEmpty else { throw V2PersistenceError.migrationFailed("An image filename was unsafe.") }
+        let source = sourceDirectory.appendingPathComponent(safeName)
+        guard fileManager.fileExists(atPath: source.path) else { return nil }
+        let destination = destinationDirectory.appendingPathComponent(safeName)
+        if !fileManager.fileExists(atPath: destination.path) { try fileManager.copyItem(at: source, to: destination) }
+        guard fileManager.fileExists(atPath: destination.path) else { throw V2PersistenceError.migrationFailed("An image could not be verified.") }
+        return safeName
     }
 }
 

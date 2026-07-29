@@ -319,19 +319,22 @@ struct SplitCalculatorContext: Hashable, Codable {
     var currencyCode: String
     var subtotal: Decimal?
     var tax: Decimal?
-    var tipAmount: Decimal?
+    var includedGratuityAmount: Decimal?
+    var additionalTipAmount: Decimal?
     var total: Decimal?
     var suggestedPeopleCount: Int?
 
-    static let manual = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: nil, tax: nil, tipAmount: nil, total: nil, suggestedPeopleCount: nil)
+    var combinedTipAndGratuity: Decimal { (includedGratuityAmount ?? 0) + (additionalTipAmount ?? 0) }
+
+    static let manual = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: nil, tax: nil, includedGratuityAmount: nil, additionalTipAmount: nil, total: nil, suggestedPeopleCount: nil)
 
     static func tipResult(_ result: TipCalculationResult, sourceCalculationID: UUID? = nil) -> SplitCalculatorContext {
-        SplitCalculatorContext(sourceCalculationID: sourceCalculationID ?? result.id, receiptID: nil, currencyCode: result.input.currencyCode, subtotal: result.input.subtotal ?? result.baseBillAmount, tax: result.input.tax, tipAmount: result.suggestedAdditionalTip, total: result.finalTotal, suggestedPeopleCount: result.input.peopleCount)
+        SplitCalculatorContext(sourceCalculationID: sourceCalculationID, receiptID: nil, currencyCode: result.input.currencyCode, subtotal: result.input.subtotal ?? result.baseBillAmount, tax: result.input.tax, includedGratuityAmount: result.includedGratuityAmount, additionalTipAmount: result.suggestedAdditionalTip, total: result.finalTotal, suggestedPeopleCount: result.input.peopleCount)
     }
 
     static func receipt(_ receipt: ReceiptRecord) -> SplitCalculatorContext {
         let included = receipt.detectedCharges.filter { [.includedGratuity, .automaticGratuity].contains($0.kind) || $0.userClassification == .includedGratuity }.compactMap(\.amount).reduce(Decimal(0), +)
-        return SplitCalculatorContext(sourceCalculationID: nil, receiptID: receipt.id, currencyCode: receipt.currencyCode, subtotal: receipt.subtotal, tax: receipt.tax, tipAmount: included == 0 ? nil : included, total: receipt.total, suggestedPeopleCount: nil)
+        return SplitCalculatorContext(sourceCalculationID: nil, receiptID: receipt.id, currencyCode: receipt.currencyCode, subtotal: receipt.subtotal, tax: receipt.tax, includedGratuityAmount: included == 0 ? nil : included, additionalTipAmount: nil, total: receipt.total, suggestedPeopleCount: nil)
     }
 }
 
@@ -396,6 +399,8 @@ struct SplitSession: Identifiable, Codable, Hashable {
     var subtotal: Decimal
     var tax: Decimal
     var tipAmount: Decimal
+    var includedGratuityAmount: Decimal
+    var additionalTipAmount: Decimal
     var total: Decimal
     var participants: [SplitParticipant]
     var items: [SplitItem]
@@ -406,6 +411,16 @@ struct SplitSession: Identifiable, Codable, Hashable {
     var receiptID: UUID?
     let createdAt: Date
     var updatedAt: Date
+
+    init(id: UUID, name: String, mode: SplitMode, currencyCode: String, subtotal: Decimal, tax: Decimal, tipAmount: Decimal, includedGratuityAmount: Decimal = 0, additionalTipAmount: Decimal? = nil, total: Decimal, participants: [SplitParticipant], items: [SplitItem], taxAllocationMode: ChargeAllocationMode, tipAllocationMode: ChargeAllocationMode, roundingRule: SplitRoundingRule, sourceCalculationID: UUID?, receiptID: UUID?, createdAt: Date, updatedAt: Date) {
+        self.id = id; self.name = name; self.mode = mode; self.currencyCode = currencyCode; self.subtotal = subtotal; self.tax = tax; self.tipAmount = tipAmount; self.includedGratuityAmount = includedGratuityAmount; self.additionalTipAmount = additionalTipAmount ?? max(0, tipAmount - includedGratuityAmount); self.total = total; self.participants = participants; self.items = items; self.taxAllocationMode = taxAllocationMode; self.tipAllocationMode = tipAllocationMode; self.roundingRule = roundingRule; self.sourceCalculationID = sourceCalculationID; self.receiptID = receiptID; self.createdAt = createdAt; self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, mode, currencyCode, subtotal, tax, tipAmount, includedGratuityAmount, additionalTipAmount, total, participants, items, taxAllocationMode, tipAllocationMode, roundingRule, sourceCalculationID, receiptID, createdAt, updatedAt }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id); name = try c.decode(String.self, forKey: .name); mode = try c.decode(SplitMode.self, forKey: .mode); currencyCode = try c.decode(String.self, forKey: .currencyCode); subtotal = try c.decode(Decimal.self, forKey: .subtotal); tax = try c.decode(Decimal.self, forKey: .tax); tipAmount = try c.decode(Decimal.self, forKey: .tipAmount); includedGratuityAmount = try c.decodeIfPresent(Decimal.self, forKey: .includedGratuityAmount) ?? 0; additionalTipAmount = try c.decodeIfPresent(Decimal.self, forKey: .additionalTipAmount) ?? tipAmount; total = try c.decode(Decimal.self, forKey: .total); participants = try c.decode([SplitParticipant].self, forKey: .participants); items = try c.decode([SplitItem].self, forKey: .items); taxAllocationMode = try c.decode(ChargeAllocationMode.self, forKey: .taxAllocationMode); tipAllocationMode = try c.decode(ChargeAllocationMode.self, forKey: .tipAllocationMode); roundingRule = try c.decode(SplitRoundingRule.self, forKey: .roundingRule); sourceCalculationID = try c.decodeIfPresent(UUID.self, forKey: .sourceCalculationID); receiptID = try c.decodeIfPresent(UUID.self, forKey: .receiptID); createdAt = try c.decode(Date.self, forKey: .createdAt); updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+    }
 }
 
 struct ParticipantItemBreakdown: Identifiable, Codable, Hashable { let id: UUID; let itemID: UUID; let itemName: String; let amount: Decimal }
