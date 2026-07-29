@@ -30,20 +30,31 @@ final class ModernizedUXUITests: XCTestCase {
         return app
     }
 
+    @discardableResult
+    private func revealButton(_ title: String, in app: XCUIApplication) -> XCUIElement {
+        let button = app.buttons[title]
+        for _ in 0..<8 where !button.isHittable { app.swipeUp() }
+        return button
+    }
+
     func testDashboardPrimaryActionsAtDefaultTextSize() {
         let app = launchedApp()
         XCTAssertTrue(app.buttons["Calculate a Tip"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Scan Receipt"].exists)
-        XCTAssertTrue(app.buttons["Split a Bill"].exists)
-        XCTAssertTrue(app.buttons["Convert Currency"].exists)
-        XCTAssertTrue(app.buttons["What Should I Tip?"].exists)
-        XCTAssertTrue(app.buttons["Calculate a Tip"].isHittable)
+        let actions = ["Receipts", "Split a Bill", "Convert Currency", "What Should I Tip?", "Quick Calculate", "Note Pad"]
+        for title in actions {
+            XCTAssertTrue(revealButton(title, in: app).isHittable, "Expected \(title) to be visible and hittable")
+        }
+        XCTAssertFalse(app.buttons["Scan Receipt"].exists)
+        XCTAssertFalse(app.staticTexts["Additional tools"].exists)
     }
 
     func testDashboardPrimaryActionsAtLargeTextSize() {
         let app = launchedApp(contentSize: "UICTContentSizeCategoryAccessibilityLarge")
         XCTAssertTrue(app.buttons["Calculate a Tip"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Calculate a Tip"].isHittable)
+        let actions = ["Receipts", "Split a Bill", "Convert Currency", "What Should I Tip?", "Quick Calculate", "Note Pad"]
+        for title in actions {
+            XCTAssertTrue(revealButton(title, in: app).isHittable, "Expected \(title) to remain hittable at accessibility text sizes")
+        }
     }
 
     func testGuidedTipAssistantPrimaryControlsRemainHittable() {
@@ -54,12 +65,43 @@ final class ModernizedUXUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Continue"].isHittable)
     }
 
-    func testReceiptConfirmationAndPermissionEntryPointsExist() {
+    func testUnifiedReceiptHubAndScannerNavigation() {
         let app = launchedApp()
-        app.buttons["Scan Receipt"].tap()
+        revealButton("Receipts", in: app).tap()
+        XCTAssertTrue(app.navigationBars["Receipts"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Add Receipt"].exists)
+        XCTAssertTrue(app.buttons["Saved Receipts"].exists)
+        app.buttons["Add Receipt"].tap()
+        XCTAssertTrue(app.navigationBars["Receipt Scanner"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Take Photo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Choose from Photo Library"].exists)
         XCTAssertTrue(app.buttons["Enter Values Manually"].exists)
-        XCTAssertTrue(app.buttons["Take Photo"].isHittable)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Receipts"].waitForExistence(timeout: 5))
+        app.navigationBars["Receipts"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["Calculate a Tip"].waitForExistence(timeout: 5))
+    }
+
+    func testSavedReceiptsRemainsAvailableFromReceiptHub() {
+        let app = launchedApp()
+        revealButton("Receipts", in: app).tap()
+        XCTAssertTrue(app.staticTexts["No saved receipts"].exists || app.staticTexts.matching(NSPredicate(format: "label MATCHES '[0-9]+ saved receipts?'")).firstMatch.exists)
+        app.buttons["Saved Receipts"].tap()
+        XCTAssertTrue(app.navigationBars["Saved Receipts"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Close"].isHittable)
+    }
+
+    func testQuickCalculatorAndNotePadNavigation() {
+        let app = launchedApp()
+        revealButton("Quick Calculate", in: app).tap()
+        XCTAssertTrue(app.navigationBars["Tip Calculator"].waitForExistence(timeout: 5))
+        app.navigationBars["Tip Calculator"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["Calculate a Tip"].waitForExistence(timeout: 5))
+        revealButton("Note Pad", in: app).tap()
+        XCTAssertTrue(app.navigationBars["Note Pad"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["New Note"].exists)
+        app.navigationBars["Note Pad"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["Calculate a Tip"].waitForExistence(timeout: 5))
     }
 
     func testEqualAndItemizedSplitEntryPointsExist() {

@@ -11,9 +11,9 @@ enum AppRoute: Hashable {
     case receiptDetail(UUID)
     case calculationDetail(UUID)
     case guideSection(String)
-    case legacyTipCalculator
-    case legacyReceipts
-    case legacyNotePad
+    case quickCalculator
+    case receipts
+    case notePad
 }
 
 struct MainMenu: View {
@@ -72,16 +72,6 @@ struct MainMenu: View {
 
                         RecentActivityCard()
 
-                        ThemedCard {
-                            Text("Additional tools").appFont(.title2)
-                            VStack(alignment: .leading, spacing: AppSpacing.standard) {
-                                NavigationLink("Quick Calculate", value: AppRoute.legacyTipCalculator)
-                                NavigationLink("Receipts", value: AppRoute.legacyReceipts)
-                                NavigationLink("Note Pad", value: AppRoute.legacyNotePad)
-                            }
-                            .appFont(.body)
-                            .foregroundStyle(AppTheme.accent)
-                        }
                     }
                     .padding(AppSpacing.screen)
                 }
@@ -102,7 +92,7 @@ struct MainMenu: View {
         switch route {
         case let .guidedTipAssistant(input, linkedReceiptID): GuidedTipAssistantView(prefilledInput: input, linkedReceiptID: linkedReceiptID)
         case let .receiptScanner(context): ReceiptScannerView(context: context)
-        case .legacyReceipts: Receipts()
+        case .receipts: Receipts()
         case let .splitCalculator(context): SplitBillCalculator(context: context)
         case let .currencyConverter(context): CurrencyConverter(context: context)
         case .history: HistoryView()
@@ -111,38 +101,55 @@ struct MainMenu: View {
         case let .receiptDetail(id): ReceiptDetailView(receiptID: id)
         case let .calculationDetail(id): CalculationDetailView(calculationID: id)
         case let .guideSection(sectionID): HelpfulTips(initialSectionID: sectionID)
-        case .legacyTipCalculator: TipCalculator()
-        case .legacyNotePad: NotePad()
+        case .quickCalculator: TipCalculator()
+        case .notePad: NotePad()
         }
     }
 }
 
 struct DashboardQuickActions: View {
-    private let actions: [(String, String, AppRoute)] = [
-        ("Scan Receipt", "doc.text.viewfinder", .receiptScanner()),
-        ("Split a Bill", "person.2", .splitCalculator()),
-        ("Convert Currency", "arrow.left.arrow.right",  .currencyConverter()),
-        ("What Should I Tip?", "book", .tippingGuide)
+    @Environment(\.sizeCategory) private var sizeCategory
+
+    private let actions: [DashboardAction] = [
+        DashboardAction(id: "receipts", title: "Receipts", systemImage: "receipt", route: .receipts),
+        DashboardAction(id: "split", title: "Split a Bill", systemImage: "person.2", route: .splitCalculator()),
+        DashboardAction(id: "currency", title: "Convert Currency", systemImage: "arrow.left.arrow.right", route: .currencyConverter()),
+        DashboardAction(id: "guide", title: "What Should I Tip?", systemImage: "book", route: .tippingGuide),
+        DashboardAction(id: "quick-calculator", title: "Quick Calculate", systemImage: "percent", route: .quickCalculator),
+        DashboardAction(id: "notepad", title: "Note Pad", systemImage: "note.text", route: .notePad)
     ]
-    private let columns = [GridItem(.flexible()), GridItem(.flexible())]
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: AppSpacing.standard, alignment: .top), count: sizeCategory.isAccessibilityCategory ? 1 : 2)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppSpacing.standard) {
             Text("Quick actions").appFont(.title2)
             LazyVGrid(columns: columns, spacing: AppSpacing.standard) {
-                ForEach(actions, id: \.0) { action in
-                    NavigationLink(value: action.2) {
+                ForEach(actions) { action in
+                    NavigationLink(value: action.route) {
                         ThemedCard {
-                            Label(action.0, systemImage: action.1)
+                            Label(action.title, systemImage: action.systemImage)
                                 .appFont(.headline)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
                         }
+                        .contentShape(Rectangle())
                     }
-                    .accessibilityLabel(action.0)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(action.title)
                 }
             }
         }
     }
+}
+
+private struct DashboardAction: Identifiable {
+    let id: String
+    let title: String
+    let systemImage: String
+    let route: AppRoute
 }
 
 
