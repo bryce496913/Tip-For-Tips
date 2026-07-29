@@ -14,13 +14,14 @@ final class SplitBillViewModel: ObservableObject {
     init(context: SplitCalculatorContext = .manual, preferences: UserPreferences = .defaults, repository: CalculationRepository = FileCalculationRepository()) {
         self.repository = repository
         let count = max(1, context.suggestedPeopleCount ?? preferences.defaultPeopleCount)
-        let subtotal = context.subtotal ?? max(0, (context.total ?? 0) - (context.tax ?? 0) - (context.tipAmount ?? 0))
-        let calculatedTotal = subtotal + (context.tax ?? 0) + (context.tipAmount ?? 0)
-        session = SplitSession(id: UUID(), name: "Bill Split", mode: .equal, currencyCode: context.currencyCode, subtotal: subtotal, tax: context.tax ?? 0, tipAmount: context.tipAmount ?? 0, total: calculatedTotal, participants: (1...count).map { SplitParticipant(name: "Person \($0)") }, items: [SplitItem(name: "Item", price: subtotal)], taxAllocationMode: .proportional, tipAllocationMode: .proportional, roundingRule: SplitRoundingRule(preference: preferences.roundingPreference), sourceCalculationID: context.sourceCalculationID, receiptID: context.receiptID, createdAt: Date(), updatedAt: Date())
-        recalculate()
+        let combinedGratuity = context.combinedTipAndGratuity
+        let subtotal = context.subtotal ?? max(0, (context.total ?? 0) - (context.tax ?? 0) - combinedGratuity)
+        let calculatedTotal = subtotal + (context.tax ?? 0) + combinedGratuity
+        session = SplitSession(id: UUID(), name: "Bill Split", mode: .equal, currencyCode: context.currencyCode, subtotal: subtotal, tax: context.tax ?? 0, tipAmount: combinedGratuity, includedGratuityAmount: context.includedGratuityAmount ?? 0, additionalTipAmount: context.additionalTipAmount ?? 0, total: context.total ?? calculatedTotal, participants: (1...count).map { SplitParticipant(name: "Person \($0)") }, items: [SplitItem(name: "Item", price: subtotal)], taxAllocationMode: .proportional, tipAllocationMode: .proportional, roundingRule: SplitRoundingRule(preference: preferences.roundingPreference), sourceCalculationID: context.sourceCalculationID, receiptID: context.receiptID, createdAt: Date(), updatedAt: Date())
+        recalculate(preserveSuppliedTotal: context.total != nil)
     }
 
-    func recalculate() { saveMessage = nil; hasUnsavedChanges = true; do { session.total = session.subtotal + session.tax + session.tipAmount; session.updatedAt = Date(); result = try engine.calculate(session: session); validationMessage = nil } catch { result = nil; validationMessage = error.localizedDescription } }
+    func recalculate(preserveSuppliedTotal: Bool = false) { saveMessage = nil; hasUnsavedChanges = true; do { if !preserveSuppliedTotal { session.total = session.subtotal + session.tax + session.tipAmount }; session.updatedAt = Date(); result = try engine.calculate(session: session); validationMessage = nil } catch { result = nil; validationMessage = error.localizedDescription } }
     func setMode(_ mode: SplitMode) { session.mode = mode; if mode == .percentage { splitEvenlyPercentages() }; recalculate() }
     func addParticipant() { session.participants.append(SplitParticipant(name: "Person \(session.participants.count + 1)")); if session.mode == .percentage { splitEvenlyPercentages() }; recalculate() }
     func deleteParticipant(_ id: UUID) { guard session.participants.count > 1 else { validationMessage = "Keep at least one participant."; return }; session.participants.removeAll { $0.id == id }; session.items = session.items.map { item in var i = item; i.assignments.removeAll { $0.participantID == id }; return i }; if session.mode == .percentage { splitEvenlyPercentages() }; recalculate() }
