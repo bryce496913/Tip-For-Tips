@@ -99,10 +99,10 @@ struct SplitBillCalculator: View {
     @State private var attemptedBillEdit = false
     @FocusState private var focusedField: BillSummaryField?
 
-    init(context: SplitCalculatorContext = .manual, preferences: UserPreferences = .defaults) {
+    init(context: SplitCalculatorContext = .manual, preferences: UserPreferences = .defaults, repository: CalculationRepository = FileCalculationRepository()) {
         var resolvedContext = context
         if context == .manual { resolvedContext.currencyCode = preferences.homeCurrencyCode }
-        let vm = SplitBillViewModel(context: resolvedContext, preferences: preferences)
+        let vm = SplitBillViewModel(context: resolvedContext, preferences: preferences, repository: repository)
         _model = StateObject(wrappedValue: vm)
         _subtotalText = State(initialValue: vm.billInput.subtotalText)
         _taxText = State(initialValue: vm.billInput.taxText)

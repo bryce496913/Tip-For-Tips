@@ -287,7 +287,7 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
     var recognizedText: String?
     var notes: String
     var confirmationStatus: ReceiptConfirmationStatus
-    let createdAt: Date
+    var createdAt: Date
     var updatedAt: Date
 
     var displayName: String { merchantName?.isEmpty == false ? merchantName! : "Receipt" }
@@ -297,7 +297,13 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
         if let subtotal { values.append(ConvertibleAmount(id: "subtotal", label: "Subtotal", amount: subtotal)) }
         if let tax { values.append(ConvertibleAmount(id: "tax", label: "Tax", amount: tax)) }
         if let total { values.append(ConvertibleAmount(id: "total", label: "Total", amount: total)) }
-        let included = detectedCharges.filter { $0.userClassification == .includedGratuity }.compactMap(\.amount).reduce(Decimal(0), +)
+        let included = detectedCharges.filter { $0.userClassification == .includedGratuity }.compactMap { charge -> Decimal? in
+            if let amount = charge.amount { return amount }
+            guard let percentage = charge.percentage, let subtotal else { return nil }
+            var value = subtotal * percentage / 100, rounded = Decimal()
+            NSDecimalRound(&rounded, &value, 2, .plain)
+            return rounded
+        }.reduce(Decimal(0), +)
         if included > 0 { values.append(ConvertibleAmount(id: "included-gratuity", label: "Included gratuity", amount: included)) }
         return values
     }

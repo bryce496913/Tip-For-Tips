@@ -67,7 +67,8 @@ struct TipRecommendationEngine {
             let additional = creditIncludedGratuity(normalTip: amount, included: included, input: input)
             return result(service: service, input: input, now: now, percentage: percent, range: nil, guidance: service.recommendationSummary, base: baseAmount, normalTip: amount, included: included, additional: additional, combined: roundedCurrency(included + additional), receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: optionalExplanation)
         case let .informational(info):
-            return result(service: service, input: input, now: now, percentage: nil, range: nil, guidance: info, base: baseAmount, normalTip: 0, included: 0, additional: 0, combined: 0, receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: service.explanation)
+            let included = roundedCurrency(includedAmount(input: input, baseAmount: gratuityBaseAmount(input, calculationBase: baseAmount)))
+            return result(service: service, input: input, now: now, percentage: nil, range: nil, guidance: info, base: baseAmount, normalTip: 0, included: included, additional: 0, combined: included, receiptTotal: receiptTotal, lower: nil, higher: nil, explanation: "\(service.explanation) This records the confirmed included charge and does not recommend another tip.")
         }
     }
 

@@ -8,6 +8,13 @@ actor InMemoryPreferencesRepository: UserPreferencesRepository {
 }
 
 final class UXRepairTests: XCTestCase {
+    @MainActor func testAppEnvironmentPublishesPreferenceOnlyAfterPersistence() async throws {
+        let repository = InMemoryPreferencesRepository()
+        let environment = AppEnvironment(preferencesRepository: repository)
+        try await environment.updatePreferences { $0.defaultPeopleCount = 6 }
+        XCTAssertEqual(environment.preferences.defaultPeopleCount, 6)
+        XCTAssertEqual((try await repository.loadPreferences()).defaultPeopleCount, 6)
+    }
     func testBillSummaryParsingEmptyAndDecimals() {
         XCTAssertNil(BillSummaryParser.parseRequired(""))
         XCTAssertEqual(BillSummaryParser.parseOptional(""), 0)
