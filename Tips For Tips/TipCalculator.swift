@@ -1,14 +1,16 @@
 import SwiftUI
 
 struct TipCalculator: View {
+    private let preferences: UserPreferences
     @State private var selectedServiceIndex = 0
     @State private var totalBill = ""
-    @State private var tipAmount = ""
+    @State private var tipAmount: String
     @State private var tipInputMode: TipInputMode = .percentage
     @State private var isServicePickerPresented = false
     @State private var didCalculate = false
 
     private let services = TippingGuidance.services
+    init(preferences: UserPreferences = .defaults) { self.preferences = preferences; _tipAmount = State(initialValue: String(describing: preferences.defaultTipPercentage)) }
     private func decimalValue(_ text: String) -> Decimal? { LocalizedDecimalParser.parse(text).flatMap { $0 >= 0 ? $0 : nil } }
 
     private func reset() { totalBill = ""; tipAmount = ""; tipInputMode = .percentage; selectedServiceIndex = 0; didCalculate = false }
@@ -19,10 +21,10 @@ struct TipCalculator: View {
     private var tipValue: Decimal { max(decimalValue(tipAmount) ?? 0, 0) }
     private var canCalculate: Bool { decimalValue(totalBill) != nil && decimalValue(tipAmount) != nil }
     private var calculatedResult: TipCalculationResult? {
-        var input = TipCalculationInput.defaults()
+        var input = TipCalculationInput.defaults(preferences: preferences)
         input.serviceID = selectedService.id
         input.finalTotal = billValue
-        input.calculationBasis = .finalTotalAfterTax
+        input.calculationBasis = preferences.tipCalculationBasis
         input.serviceQuality = .good
         guard tipInputMode == .percentage else { return nil }
         let customService = TippingService(id: selectedService.id, name: selectedService.name, category: selectedService.category, recommendation: .percentage(minimum: tipValue, standard: tipValue, maximum: tipValue), explanation: selectedService.explanation, guideSectionID: selectedService.guideSectionID, symbolName: selectedService.symbolName)
@@ -73,10 +75,10 @@ struct TipCalculator: View {
                     ThemedCard {
                         Text("Calculation Result").appFont(.title2)
                         if didCalculate {
-                            Text("Tip Amount: \(formatMoney(calculatedTip, code: "USD"))")
+                            Text("Tip Amount: \(formatMoney(calculatedTip, code: preferences.homeCurrencyCode))")
                                 .appFont(.title2)
                                 .foregroundStyle(AppTheme.highlight)
-                            Text("Total Amount: \(formatMoney(totalAmount, code: "USD"))")
+                            Text("Total Amount: \(formatMoney(totalAmount, code: preferences.homeCurrencyCode))")
                                 .appFont(.title2)
                                 .foregroundStyle(AppTheme.highlight)
                         } else {

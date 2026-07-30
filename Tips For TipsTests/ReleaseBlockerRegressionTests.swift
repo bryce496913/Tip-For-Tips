@@ -193,4 +193,22 @@ final class IncludedGratuityPercentageReleaseTests: XCTestCase {
         XCTAssertEqual(receipt.convertibleAmounts.first { $0.id == "included-gratuity" }?.amount, 18)
         XCTAssertEqual(receipt.convertibleAmounts.first { $0.id == "included-gratuity" }?.label, "Included gratuity")
     }
+
+    func testPercentageOnlyReceiptGratuityIsConvertible() {
+        let charge = DetectedReceiptCharge(label: "Gratuity 18%", amount: nil, percentage: 18, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity)
+        let receipt = ReceiptRecord(id: UUID(), merchantName: nil, receiptDate: nil, subtotal: 100, tax: 8, total: 126, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(), updatedAt: Date())
+        XCTAssertEqual(receipt.convertibleAmounts.first { $0.id == "included-gratuity" }?.amount, 18)
+    }
+
+    func testInformationalServicePreservesConfirmedIncludedGratuity() throws {
+        var input = TipCalculationInput.defaults()
+        input.serviceID = "service-charges"; input.subtotal = 100; input.finalTotal = 120
+        input.gratuityStatus = .yes; input.includedGratuityEntryMode = .amount
+        input.includedGratuityAmount = 20; input.finalTotalIncludesIncludedGratuity = true
+        let result = try TipRecommendationEngine().calculate(input: input)
+        XCTAssertEqual(result.includedGratuityAmount, 20)
+        XCTAssertEqual(result.suggestedAdditionalTip, 0)
+        XCTAssertEqual(result.combinedGratuity, 20)
+        XCTAssertEqual(result.finalTotal, 120)
+    }
 }

@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-protocol CalculationRepository {
+protocol CalculationRepository: Sendable {
     func fetchCalculations() async throws -> [SavedCalculationRecord]
     func saveCalculation(_ record: SavedCalculationRecord) async throws
     func deleteCalculation(id: UUID) async throws
@@ -20,12 +20,12 @@ protocol ReceiptRepository: Sendable {
     func loadThumbnail(filename: String) async throws -> UIImage
 }
 
-protocol UserPreferencesRepository {
+protocol UserPreferencesRepository: Sendable {
     func loadPreferences() async throws -> UserPreferences
     func savePreferences(_ preferences: UserPreferences) async throws
 }
 
-protocol CurrencyRateRepository {
+protocol CurrencyRateRepository: Sendable {
     func cachedRate(from sourceCurrencyCode: String, to destinationCurrencyCode: String) async throws -> CurrencyConversionSnapshot?
     func saveRateSnapshot(_ snapshot: CurrencyConversionSnapshot) async throws
 }
@@ -136,10 +136,12 @@ actor V2MigrationCoordinator {
     static let currentVersion = 2
     private let rootURL: URL
     private let fileManager: FileManager
+    private let receiptRepository: ReceiptRepository?
 
-    init(rootURL: URL? = nil, fileManager: FileManager = .default) {
+    init(rootURL: URL? = nil, fileManager: FileManager = .default, receiptRepository: ReceiptRepository? = nil) {
         self.rootURL = rootURL ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         self.fileManager = fileManager
+        self.receiptRepository = receiptRepository
     }
 
     func migrateIfNeeded() async -> V2MigrationReport {
@@ -214,7 +216,7 @@ actor V2MigrationCoordinator {
             init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); id = try? c.decode(UUID.self, forKey: .id); imageData = try? c.decode(Data.self, forKey: .imageData); name = try c.decode(String.self, forKey: .name) }
         }
         let source = try JSONDecoder().decode([RootV1Receipt].self, from: Data(contentsOf: legacyURL))
-        let repository = FileReceiptRepository(rootURL: rootURL, fileManager: fileManager)
+        let repository: ReceiptRepository = receiptRepository ?? FileReceiptRepository(rootURL: rootURL, fileManager: fileManager)
         var existingIDs = Set(try await repository.fetchReceipts().map(\.id))
         let fileDate = ((try? fileManager.attributesOfItem(atPath: legacyURL.path)[.modificationDate]) as? Date) ?? Date()
         var migrated = 0
