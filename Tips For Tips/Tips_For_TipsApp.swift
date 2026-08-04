@@ -35,13 +35,37 @@ struct Tips_For_TipsApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if appEnvironment.isLoaded { MainMenu() }
+                if appEnvironment.isLoaded && appEnvironment.preferences.hasCompletedOnboarding { MainMenu() }
+                else if appEnvironment.isLoaded { OnboardingView() }
                 else if appEnvironment.startupError != nil { MigrationRecoveryView() }
                 else { ProgressView("Preparing local data…").task { await appEnvironment.prepare() } }
             }
                 .environmentObject(appEnvironment)
                 .preferredColorScheme(appEnvironment.preferences.appearancePreference.colorScheme)
         }
+    }
+}
+
+struct OnboardingView: View {
+    @EnvironmentObject private var environment: AppEnvironment
+    @State private var errorMessage: String?
+    var body: some View {
+        AppScreen {
+            VStack(spacing: AppSpacing.section) {
+                Spacer()
+                Image("MainLogo").resizable().scaledToFit().frame(maxWidth: 260).accessibilityHidden(true)
+                ScreenTitle(text: "Tips for Tips", subtitle: "Calculate tips, review receipt-detected charges, split bills, and keep optional records locally on this device.")
+                ThemedCard {
+                    Label("Receipt recognition runs on device", systemImage: "lock.shield")
+                    Label("Detected gratuity must be reviewed", systemImage: "checkmark.seal")
+                    Label("No account is required", systemImage: "person.crop.circle.badge.xmark")
+                }
+                PrimaryButton(title: "Continue", systemImage: "arrow.right") {
+                    Task { do { try await environment.updatePreferences { $0.hasCompletedOnboarding = true } } catch { errorMessage = "Onboarding could not be completed. Try again." } }
+                }
+                Spacer()
+            }.padding(AppSpacing.screen)
+        }.alert("Onboarding", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
     }
 }
 

@@ -2,6 +2,44 @@ import XCTest
 @testable import Tips_For_Tips
 
 final class ReleaseBlockerRegressionTests: XCTestCase {
+    func testReleaseLinksAreSecureAndNotPlaceholders() {
+        for url in [AppLinks.privacyPolicy, AppLinks.support] {
+            XCTAssertEqual(url.scheme, "https")
+            XCTAssertNotNil(url.host)
+            XCTAssertFalse(url.absoluteString.lowercased().contains("example"))
+            XCTAssertFalse(url.absoluteString.lowercased().contains("placeholder"))
+        }
+    }
+
+    @MainActor
+    func testFinancialOCRKindsAlwaysStartUnreviewed() {
+        let kinds: [ReceiptChargeKind] = [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge, .administrativeFee, .suggestedGratuity, .deliveryFee]
+        for kind in kinds { XCTAssertEqual(ReceiptScannerViewModel.initialClassification(for: kind), .unreviewed) }
+    }
+
+    func testUnreviewedChargeIsNotTrustedAsIncludedGratuity() {
+        let charge = DetectedReceiptCharge(label: "Automatic gratuity 20.00", amount: 20, kind: .automaticGratuity, confidence: 1, userClassification: .unreviewed)
+        let receipt = ReceiptRecord(id: UUID(), merchantName: "Fixture", receiptDate: nil, subtotal: 100, tax: 8, total: 128, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", confirmationStatus: .needsReview, createdAt: Date(), updatedAt: Date())
+        XCTAssertTrue(receipt.hasUnreviewedFinancialCharges)
+        XCTAssertEqual(receipt.confirmedIncludedGratuity(), .amount(0))
+        XCTAssertEqual(receipt.tipCalculationInput().includedGratuityAmount, 0)
+    }
+
+    func testTimestampedNoteFailureReportsExactSourceAndPreservesValidNote() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("valid note".utf8).write(to: root.appendingPathComponent("10 04 2024 14:34.txt"))
+        try Data([0xFF, 0xFE]).write(to: root.appendingPathComponent("10 04 2024 14:35.txt"))
+        let coordinator = V2MigrationCoordinator(rootURL: root)
+        let report = await coordinator.migrateIfNeeded()
+        let issues = await coordinator.recoveryIssues
+        XCTAssertFalse(report.succeeded)
+        XCTAssertEqual(issues.map(\.sourceRelativePath), ["10 04 2024 14:35.txt"])
+        XCTAssertEqual(issues.first?.phase, .timestampedNote)
+        let data = try Data(contentsOf: root.appendingPathComponent("Notes/notes.json"))
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: data).records.map(\.text), ["valid note"])
+    }
     @MainActor
     func testSplitHandoffPreservesIncludedAndAdditionalGratuity() throws {
         var input = TipCalculationInput.defaults()

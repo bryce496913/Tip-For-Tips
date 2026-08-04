@@ -239,6 +239,7 @@ enum ReceiptChargeKind: String, Codable, Hashable {
 }
 
 enum ReceiptChargeClassification: String, Codable, CaseIterable, Identifiable, Hashable {
+    case unreviewed
     case includedGratuity
     case serviceChargeUnsure
     case deliveryFee
@@ -249,6 +250,7 @@ enum ReceiptChargeClassification: String, Codable, CaseIterable, Identifiable, H
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .unreviewed: return "Review required"
         case .includedGratuity: return "Included gratuity"
         case .serviceChargeUnsure: return "Service charge / unsure"
         case .deliveryFee: return "Delivery fee"
@@ -293,6 +295,13 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
     var updatedAt: Date
 
     var displayName: String { merchantName?.isEmpty == false ? merchantName! : "Receipt" }
+    var hasUnreviewedFinancialCharges: Bool {
+        detectedCharges.contains { charge in
+            [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge,
+             .administrativeFee, .suggestedGratuity, .deliveryFee].contains(charge.kind)
+                && (charge.userClassification == nil || charge.userClassification == .unreviewed)
+        }
+    }
 
     var convertibleAmounts: [ConvertibleAmount] {
         var values: [ConvertibleAmount] = []
@@ -450,12 +459,10 @@ struct UserPreferences: Codable, Hashable {
     var defaultPeopleCount: Int
     var roundingPreference: RoundingPreference
     var showTippingExplanations: Bool
-    var hapticsEnabled: Bool
-    var soundsEnabled: Bool
     var appearancePreference: AppearancePreference
     var hasCompletedOnboarding: Bool
 
-    static let defaults = UserPreferences(homeCurrencyCode: "USD", defaultTipPercentage: 20, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 1, roundingPreference: .exactCents, showTippingExplanations: true, hapticsEnabled: true, soundsEnabled: true, appearancePreference: .dark, hasCompletedOnboarding: false)
+    static let defaults = UserPreferences(homeCurrencyCode: "USD", defaultTipPercentage: 20, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 1, roundingPreference: .exactCents, showTippingExplanations: true, appearancePreference: .dark, hasCompletedOnboarding: false)
 }
 
 extension UserPreferences {

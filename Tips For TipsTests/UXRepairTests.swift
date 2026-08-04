@@ -73,7 +73,7 @@ final class UXRepairTests: XCTestCase {
     }
 
     func testInvalidStoredValueFallback() {
-        let invalid = UserPreferences(homeCurrencyCode: "BAD", defaultTipPercentage: -1, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 0, roundingPreference: .exactCents, showTippingExplanations: true, hapticsEnabled: true, soundsEnabled: true, appearancePreference: .dark, hasCompletedOnboarding: false)
+        let invalid = UserPreferences(homeCurrencyCode: "BAD", defaultTipPercentage: -1, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 0, roundingPreference: .exactCents, showTippingExplanations: true, appearancePreference: .dark, hasCompletedOnboarding: false)
         XCTAssertEqual(invalid.validated.homeCurrencyCode, "BAD")
         XCTAssertEqual(invalid.validated.defaultTipPercentage, UserPreferences.defaults.defaultTipPercentage)
         XCTAssertEqual(invalid.validated.defaultPeopleCount, UserPreferences.defaults.defaultPeopleCount)
