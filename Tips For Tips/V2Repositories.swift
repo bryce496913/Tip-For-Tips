@@ -72,7 +72,7 @@ struct V2MigrationReport: Codable, Hashable {
 enum LegacyMigrationSourceKind: String, Codable, Hashable { case rootReceipts, intermediateReceipts, notes }
 enum MigrationPhase: String, Codable, Hashable {
     case rootEmbeddedReceipts, intermediateReceiptMetadata, intermediateReceiptImages
-    case timestampedNotes, legacyNotesEnvelope, verification
+    case timestampedNote, legacyNotesEnvelope, verification
 }
 struct MigrationRecoveryIssue: Identifiable, Codable, Hashable {
     let id: UUID
@@ -188,8 +188,15 @@ actor V2MigrationCoordinator {
             recoveryIssues.append(issue(kind: .intermediateReceipts, path: "Receipts/receipts.json", phase: .intermediateReceiptMetadata, error: error))
         }
 
-        do { try backupLegacyFileIfPresent(named: "notes.json"); migratedNotes = try await migrateLegacyNotes() }
+        do { try validateLegacyNotesEnvelope() }
         catch { failures.append("Notes/notes.json: \(error.localizedDescription)"); recoveryIssues.append(issue(kind: .notes, path: "Notes/notes.json", phase: .legacyNotesEnvelope, error: error)) }
+        let noteResults = migrateTimestampedNotes()
+        migratedNotes += noteResults.filter { $0.failure == nil && $0.migratedNoteID != nil }.count
+        for result in noteResults where result.failure != nil {
+            let error = V2PersistenceError.migrationFailed(result.failure ?? "The note could not be migrated.")
+            failures.append("\(result.sourceRelativePath): \(error.localizedDescription)")
+            recoveryIssues.append(issue(kind: .notes, path: result.sourceRelativePath, phase: .timestampedNote, error: error))
+        }
 
         let report = V2MigrationReport(fromVersion: 1, toVersion: Self.currentVersion, migratedNotesCount: migratedNotes, migratedReceiptsCount: migratedReceipts, partialFailures: failures, completedAt: Date())
         if report.succeeded {
@@ -224,10 +231,14 @@ actor V2MigrationCoordinator {
         guard !relativePath.hasPrefix("/"), !relativePath.split(separator: "/").contains("..") else {
             throw V2PersistenceError.migrationFailed("The recovery source path is unsafe.")
         }
-        let allowed = relativePath == "receipts.json" || relativePath == "notes.json" || relativePath.hasPrefix("Receipts/") || relativePath.hasPrefix("Notes/")
+        let formatter = DateFormatter(); formatter.dateFormat = "dd MM yyyy HH:mm"; formatter.locale = Locale(identifier: "en_US_POSIX")
+        let isTimestampedRootNote = !relativePath.contains("/") && relativePath.hasSuffix(".txt") && formatter.date(from: URL(fileURLWithPath: relativePath).deletingPathExtension().lastPathComponent) != nil
+        let allowed = relativePath == "receipts.json" || relativePath == "notes.json" || relativePath.hasPrefix("Receipts/") || relativePath.hasPrefix("Notes/") || isTimestampedRootNote
         guard allowed else { throw V2PersistenceError.migrationFailed("The recovery source is outside approved legacy storage.") }
         let source = rootURL.appendingPathComponent(relativePath).standardizedFileURL
         guard source.path.hasPrefix(rootURL.standardizedFileURL.path + "/") else { throw V2PersistenceError.migrationFailed("The recovery source path is unsafe.") }
+        let resolvedRoot = rootURL.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        guard source.resolvingSymlinksInPath().path.hasPrefix(resolvedRoot) else { throw V2PersistenceError.migrationFailed("The recovery source symlink leaves approved legacy storage.") }
         return source
     }
 
@@ -305,19 +316,48 @@ actor V2MigrationCoordinator {
         return UUID(uuid: (raw[0],raw[1],raw[2],raw[3],raw[4],raw[5],raw[6],raw[7],raw[8],raw[9],raw[10],raw[11],raw[12],raw[13],raw[14],raw[15]))
     }
 
-    private func migrateLegacyNotes() async throws -> Int {
-        let formatter = DateFormatter(); formatter.dateFormat = "dd MM yyyy HH:mm"; formatter.locale = Locale(identifier: "en_US_POSIX")
-        let candidates = try fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil).filter { $0.pathExtension == "txt" && formatter.date(from: $0.deletingPathExtension().lastPathComponent) != nil }
-        guard !candidates.isEmpty else { return 0 }
+    private func validateLegacyNotesEnvelope() throws {
         let notesURL = rootURL.appendingPathComponent("Notes/notes.json")
-        let before: Int
+        guard fileManager.fileExists(atPath: notesURL.path) else { return }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        _ = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL))
+    }
+
+    struct LegacyNoteMigrationResult {
+        var sourceRelativePath: String
+        var migratedNoteID: UUID?
+        var warning: String?
+        var failure: String?
+    }
+
+    private func migrateTimestampedNotes() -> [LegacyNoteMigrationResult] {
+        let formatter = DateFormatter(); formatter.dateFormat = "dd MM yyyy HH:mm"; formatter.locale = Locale(identifier: "en_US_POSIX")
+        guard let candidates = try? fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.contentModificationDateKey]).filter({ $0.pathExtension == "txt" && formatter.date(from: $0.deletingPathExtension().lastPathComponent) != nil }) else { return [] }
+        let notesURL = rootURL.appendingPathComponent("Notes/notes.json")
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        var notes: [SavedNote] = []
         if fileManager.fileExists(atPath: notesURL.path) {
-            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-            before = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)).records.count
-        } else { before = 0 }
-        let after = try await NoteStore(rootURL: rootURL).loadNotes().count
-        guard after >= before + candidates.count else { throw V2PersistenceError.migrationFailed("Not all legacy notes were verified.") }
-        return after - before
+            guard let existing = try? decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)).records else { return [] }
+            notes = existing
+        }
+        var results: [LegacyNoteMigrationResult] = []
+        for file in candidates {
+            let relative = file.lastPathComponent
+            do {
+                let text = try String(contentsOf: file, encoding: .utf8)
+                let values = try file.resourceValues(forKeys: [.contentModificationDateKey])
+                let created = formatter.date(from: file.deletingPathExtension().lastPathComponent) ?? values.contentModificationDate ?? Date()
+                let note = SavedNote(id: UUID(), text: text, createdAt: created, updatedAt: values.contentModificationDate ?? created)
+                var updated = notes; updated.append(note)
+                try fileManager.createDirectory(at: notesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+                try encoder.encode(StoredDataEnvelope(version: 1, records: updated)).write(to: notesURL, options: .atomic)
+                let legacy = rootURL.appendingPathComponent("Notes/Legacy", isDirectory: true); try fileManager.createDirectory(at: legacy, withIntermediateDirectories: true)
+                try fileManager.moveItem(at: file, to: legacy.appendingPathComponent(relative))
+                notes = updated; results.append(.init(sourceRelativePath: relative, migratedNoteID: note.id, warning: nil, failure: nil))
+            } catch { results.append(.init(sourceRelativePath: relative, migratedNoteID: nil, warning: nil, failure: error.localizedDescription)) }
+        }
+        return results
     }
 
     private func copyLegacyImage(named filename: String, from sourceDirectory: URL, to destinationDirectory: URL) throws -> String? {
