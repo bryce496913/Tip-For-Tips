@@ -73,13 +73,13 @@ struct MainMenu: View {
         switch route {
         case let .guidedTipAssistant(input, linkedReceiptID): GuidedTipAssistantView(preferences: preferences, prefilledInput: input, linkedReceiptID: linkedReceiptID, repository: appEnvironment.calculationRepository)
         case let .receiptScanner(context): ReceiptScannerView(context: context, preferences: preferences, repository: appEnvironment.receiptRepository, calculationRepository: appEnvironment.calculationRepository)
-        case .receipts: Receipts(repository: appEnvironment.receiptRepository, calculationRepository: appEnvironment.calculationRepository, preferences: preferences)
+        case .receipts: Receipts(repository: appEnvironment.receiptRepository, calculationRepository: appEnvironment.calculationRepository, currencyRateRepository: appEnvironment.currencyRateRepository, preferences: preferences)
         case let .splitCalculator(context): SplitBillCalculator(context: context, preferences: preferences, repository: appEnvironment.calculationRepository)
         case let .currencyConverter(context): CurrencyConverter(context: context, preferences: preferences, repository: appEnvironment.currencyRateRepository)
         case .history: HistoryView(calculationRepository: appEnvironment.calculationRepository, receiptRepository: appEnvironment.receiptRepository)
         case .tippingGuide: HelpfulTips()
         case .settings: SettingsView(initialPreferences: preferences, repository: appEnvironment.preferencesRepository)
-        case let .receiptDetail(id): ReceiptDetailView(receiptID: id, repository: appEnvironment.receiptRepository)
+        case let .receiptDetail(id): ReceiptDetailView(receiptID: id, preferences: preferences, repository: appEnvironment.receiptRepository, calculationRepository: appEnvironment.calculationRepository, currencyRateRepository: appEnvironment.currencyRateRepository)
         case let .calculationDetail(id): CalculationDetailView(calculationID: id, repository: appEnvironment.calculationRepository)
         case let .guideSection(sectionID): HelpfulTips(initialSectionID: sectionID)
         case .quickCalculator: TipCalculator(preferences: preferences)
@@ -292,7 +292,86 @@ struct CalculationDetailView: View {
     var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { if let record, let tip = record.tipResult { ResultSummary(result: tip, showExplanation: appEnvironment.preferences.showTippingExplanations); ThemedCard { Text("Saved Details").appFont(.title2); ResultSummaryRow(label: "Service", value: tip.service.name); ResultSummaryRow(label: "Basis", value: tip.input.calculationBasis.title); ResultSummaryRow(label: "Currency", value: tip.input.currencyCode); ResultSummaryRow(label: "Date", value: record.createdAt.formatted(date: .abbreviated, time: .shortened)); if !record.notes.isEmpty { Text(record.notes).appFont(.body) }; NavigationLink("Split this bill", value: AppRoute.splitCalculator(.tipResult(tip, sourceCalculationID: record.id))); NavigationLink("Convert", value: AppRoute.currencyConverter(CurrencyConversionContext(sourceCurrencyCode: tip.input.currencyCode, values: [ConvertibleAmount(id: "bill", label: "Bill", amount: tip.baseBillAmount), ConvertibleAmount(id: "tip", label: "Tip", amount: tip.suggestedAdditionalTip), ConvertibleAmount(id: "total", label: "Final total", amount: tip.finalTotal)], sourceRecordID: record.id))); NavigationLink("Open related guidance", value: AppRoute.guideSection(tip.service.guideSectionID ?? tip.service.id)); ShareLink(item: ShareSummaryBuilder().tipSummary(tip)) { Text("Share") } } } else if let record, let split = record.splitResult { SplitDetailSummary(result: split); ShareLink(item: ShareSummaryBuilder().splitSummary(split)) { Text("Share Split") } } else { EmptyStateView(systemImage: "exclamationmark.triangle", title: "Related record no longer available", message: error ?? "This saved calculation could not be found.") } }.padding(AppSpacing.screen) } }.navigationTitle("History Detail").task { await load() } }
     private func load() async { do { record = try await repository.fetchCalculations().first { $0.id == calculationID } } catch { self.error = "Saved calculation could not be loaded." } }
 }
-struct ReceiptDetailView: View { let receiptID: UUID; @State private var receipt: ReceiptRecord?; private let repository: ReceiptRepository; init(receiptID: UUID, repository: ReceiptRepository = FileReceiptRepository()) { self.receiptID = receiptID; self.repository = repository }; var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { if let receipt { ThemedCard { Text(receipt.displayName).appFont(.title2); ResultSummaryRow(label: "Currency", value: receipt.currencyCode); if let subtotal = receipt.subtotal { ResultSummaryRow(label: "Subtotal", value: formatMoney(subtotal, code: receipt.currencyCode)) }; if let tax = receipt.tax { ResultSummaryRow(label: "Tax", value: formatMoney(tax, code: receipt.currencyCode)) }; if let total = receipt.total { ResultSummaryRow(label: "Total", value: formatMoney(total, code: receipt.currencyCode)) }; Text(receipt.notes.isEmpty ? "No notes" : receipt.notes).appFont(.body); Text("Receipt images may contain merchant information, payment details, order numbers and personal notes. Share the image only when you choose to include it.").appFont(.body).foregroundStyle(AppTheme.secondaryText); ShareLink(item: ShareSummaryBuilder().receiptSummary(receipt)) { Text("Share summary only") }; NavigationLink("Calculate tip", value: AppRoute.guidedTipAssistant(receipt.tipCalculationInput(), linkedReceiptID: receipt.id)); NavigationLink("Split bill", value: AppRoute.splitCalculator(.receipt(receipt))); NavigationLink("Convert", value: AppRoute.currencyConverter(CurrencyConversionContext(sourceCurrencyCode: receipt.currencyCode, values: receipt.convertibleAmounts, sourceRecordID: receipt.id))) } } else { EmptyStateView(systemImage: "doc.text.magnifyingglass", title: "Related record no longer available", message: "This receipt could not be found.") } }.padding(AppSpacing.screen) } }.navigationTitle("Receipt").task { receipt = try? await repository.receipt(id: receiptID) } } }
+enum ReceiptImageState { case loading, metadataOnly, available(UIImage), missing, corrupt, failed(String) }
+
+struct ReceiptDetailView: View {
+    let receiptID: UUID
+    let preferences: UserPreferences
+    private let repository: ReceiptRepository
+    private let calculationRepository: CalculationRepository
+    private let currencyRateRepository: CurrencyRateRepository
+    @State private var receipt: ReceiptRecord?
+    @State private var imageState: ReceiptImageState = .loading
+
+    init(receiptID: UUID, preferences: UserPreferences = .defaults, repository: ReceiptRepository = FileReceiptRepository(), calculationRepository: CalculationRepository = FileCalculationRepository(), currencyRateRepository: CurrencyRateRepository = FileCurrencyRateRepository()) {
+        self.receiptID = receiptID; self.preferences = preferences; self.repository = repository; self.calculationRepository = calculationRepository; self.currencyRateRepository = currencyRateRepository
+    }
+
+    var body: some View {
+        AppScreen { ScrollView { VStack(spacing: AppSpacing.section) {
+            if let receipt {
+                imageCard(receipt)
+                ThemedCard {
+                    Text(receipt.displayName).appFont(.title2)
+                    ResultSummaryRow(label: "Currency", value: receipt.currencyCode.isEmpty ? preferences.homeCurrencyCode : receipt.currencyCode)
+                    if let subtotal = receipt.subtotal { ResultSummaryRow(label: "Subtotal", value: formatMoney(subtotal, code: receipt.currencyCode)) }
+                    if let tax = receipt.tax { ResultSummaryRow(label: "Tax", value: formatMoney(tax, code: receipt.currencyCode)) }
+                    if let total = receipt.total { ResultSummaryRow(label: "Total", value: formatMoney(total, code: receipt.currencyCode)) }
+                    if case let .amount(gratuity) = receipt.confirmedIncludedGratuity(), gratuity > 0 { ResultSummaryRow(label: "Included gratuity", value: formatMoney(gratuity, code: receipt.currencyCode)) }
+                    if case .needsSubtotal = receipt.confirmedIncludedGratuity() { Text("Enter a subtotal to review percentage-based included gratuity.").foregroundStyle(AppTheme.highlight) }
+                    Text(receipt.notes.isEmpty ? "No notes" : receipt.notes).appFont(.body)
+                    ShareLink(item: ShareSummaryBuilder().receiptSummary(receipt)) { Text("Share summary only") }
+                    NavigationLink { GuidedTipAssistantView(preferences: preferences, prefilledInput: receipt.tipCalculationInput(defaults: preferences), linkedReceiptID: receipt.id, repository: calculationRepository) } label: { Label("Calculate Tip", systemImage: "percent") }
+                    NavigationLink { SplitBillCalculator(context: .receipt(receipt), preferences: preferences, repository: calculationRepository) } label: { Label("Split Bill", systemImage: "person.2") }
+                    NavigationLink { CurrencyConverter(context: CurrencyConversionContext(sourceCurrencyCode: receipt.currencyCode.isEmpty ? preferences.homeCurrencyCode : receipt.currencyCode, values: receipt.convertibleAmounts, sourceRecordID: receipt.id), preferences: preferences, repository: currencyRateRepository) } label: { Label("Convert Currency", systemImage: "arrow.left.arrow.right") }
+                }
+            } else { EmptyStateView(systemImage: "doc.text.magnifyingglass", title: "Related record no longer available", message: "This receipt could not be found.") }
+        }.padding(AppSpacing.screen) } }.navigationTitle("Receipt").task { await reload() }
+    }
+
+    @ViewBuilder private func imageCard(_ receipt: ReceiptRecord) -> some View {
+        ThemedCard {
+            switch imageState {
+            case .loading: ProgressView("Loading receipt image…")
+            case .metadataOnly:
+                Label("Manual entry", systemImage: "doc.text"); Text("This receipt does not have an image.")
+                replacementLink("Add Receipt Image", receipt)
+            case let .available(image):
+                Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 220).accessibilityLabel("Receipt image preview")
+                NavigationLink { ReceiptFullImageView(image: image, title: receipt.displayName) } label: { Label("View Image", systemImage: "photo") }
+                replacementLink("Replace Image", receipt)
+            case .missing:
+                Label("Receipt image is missing", systemImage: "photo.badge.exclamationmark"); Text("The saved receipt details are still available. Add a replacement image to repair this receipt.")
+                replacementLink("Add Replacement Image", receipt)
+            case .corrupt:
+                Label("Receipt image could not be opened", systemImage: "exclamationmark.triangle"); Text("The saved receipt details remain available. Replace the damaged image to repair this receipt.")
+                replacementLink("Replace Damaged Image", receipt)
+            case let .failed(message): Text(message); replacementLink("Try a Replacement Image", receipt)
+            }
+        }
+    }
+
+    private func replacementLink(_ title: String, _ receipt: ReceiptRecord) -> some View {
+        NavigationLink { ReceiptScannerView(context: .replaceImage(receiptID: receipt.id), preferences: preferences, repository: repository, calculationRepository: calculationRepository) } label: { Label(title, systemImage: "camera") }
+    }
+
+    private func reload() async {
+        do {
+            guard let loaded = try await repository.receipt(id: receiptID) else { receipt = nil; return }
+            receipt = loaded
+            guard let filename = loaded.imageFilename else { imageState = .metadataOnly; return }
+            do { imageState = .available(try await repository.loadImage(filename: filename)) }
+            catch let error as ReceiptStorageError { imageState = error == .imageMissing ? .missing : (error == .imageCorrupt ? .corrupt : .failed(error.localizedDescription)) }
+            catch { imageState = .failed("The receipt image could not be loaded. Try again or add a replacement.") }
+        } catch { receipt = nil; imageState = .failed(error.localizedDescription) }
+    }
+}
+
+struct ReceiptFullImageView: View {
+    let image: UIImage; let title: String
+    @State private var scale: CGFloat = 1
+    var body: some View { AppScreen { ScrollView([.horizontal, .vertical]) { Image(uiImage: image).resizable().scaledToFit().scaleEffect(scale).padding().gesture(MagnificationGesture().onChanged { scale = min(max($0, 1), 5) }) } }.navigationTitle(title).navigationBarTitleDisplayMode(.inline) }
+}
 struct SplitDetailSummary: View { let result: SplitCalculationResult; var body: some View { ThemedCard { Text(result.session.name).appFont(.title2); ResultSummaryRow(label: "Original total", value: formatMoney(result.originalTotal, code: result.session.currencyCode)); ResultSummaryRow(label: "Rounded total", value: formatMoney(result.roundedCollectedTotal, code: result.session.currencyCode)); ResultSummaryRow(label: "Difference", value: formatMoney(result.roundingDifference, code: result.session.currencyCode)); ForEach(result.participantResults) { p in ResultSummaryRow(label: p.participantName + (p.isPaid ? " (paid)" : " (unpaid)"), value: formatMoney(p.finalAmount, code: result.session.currencyCode)) } } } }
 
 @MainActor

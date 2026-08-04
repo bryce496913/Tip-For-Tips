@@ -299,14 +299,9 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
         if let subtotal { values.append(ConvertibleAmount(id: "subtotal", label: "Subtotal", amount: subtotal)) }
         if let tax { values.append(ConvertibleAmount(id: "tax", label: "Tax", amount: tax)) }
         if let total { values.append(ConvertibleAmount(id: "total", label: "Total", amount: total)) }
-        let included = detectedCharges.filter { $0.userClassification == .includedGratuity }.compactMap { charge -> Decimal? in
-            if let amount = charge.amount { return amount }
-            guard let percentage = charge.percentage, let subtotal else { return nil }
-            var value = subtotal * percentage / 100, rounded = Decimal()
-            NSDecimalRound(&rounded, &value, 2, .plain)
-            return rounded
-        }.reduce(Decimal(0), +)
-        if included > 0 { values.append(ConvertibleAmount(id: "included-gratuity", label: "Included gratuity", amount: included)) }
+        if case let .amount(included) = confirmedIncludedGratuity(), included > 0 {
+            values.append(ConvertibleAmount(id: "included-gratuity", label: "Included gratuity", amount: included))
+        }
         return values
     }
 
@@ -342,13 +337,9 @@ struct SplitCalculatorContext: Hashable, Codable {
     }
 
     static func receipt(_ receipt: ReceiptRecord) -> SplitCalculatorContext {
-        let included = receipt.detectedCharges.filter { $0.userClassification == .includedGratuity }.reduce(Decimal(0)) { total, charge in
-            if let amount = charge.amount { return total + amount }
-            if let percentage = charge.percentage, let subtotal = receipt.subtotal { return total + subtotal * percentage / 100 }
-            return total
-        }.currencyRounded
-        let unresolved = receipt.subtotal == nil && receipt.detectedCharges.contains { $0.userClassification == .includedGratuity && $0.amount == nil && $0.percentage != nil }
-        return SplitCalculatorContext(sourceCalculationID: nil, receiptID: receipt.id, currencyCode: receipt.currencyCode, subtotal: receipt.subtotal, tax: receipt.tax, includedGratuityAmount: included == 0 ? nil : included, additionalTipAmount: nil, total: receipt.total, suggestedPeopleCount: nil, handoffValidationMessage: unresolved ? "Enter the receipt subtotal or gratuity amount so the included gratuity can be carried into the split correctly." : nil)
+        let result = receipt.confirmedIncludedGratuity()
+        let included: Decimal? = { if case let .amount(value) = result { return value == 0 ? nil : value }; return nil }()
+        return SplitCalculatorContext(sourceCalculationID: nil, receiptID: receipt.id, currencyCode: receipt.currencyCode, subtotal: receipt.subtotal, tax: receipt.tax, includedGratuityAmount: included, additionalTipAmount: nil, total: receipt.total, suggestedPeopleCount: nil, handoffValidationMessage: result == .needsSubtotal ? "Enter the receipt subtotal or gratuity amount so the included gratuity can be carried into the split correctly." : nil)
     }
 }
 
@@ -578,24 +569,55 @@ struct GuideBookmark: Identifiable, Codable, Hashable { var id: String; var crea
 struct RecentGuideItem: Identifiable, Codable, Hashable { var id: String; var title: String; var viewedAt: Date }
 
 extension ReceiptRecord {
+    enum IncludedGratuityResult: Equatable {
+        case amount(Decimal)
+        case needsSubtotal
+    }
+
+    /// The single source of truth used by every receipt handoff. Only charges the
+    /// user confirmed as included gratuity are financial inputs; OCR guesses are
+    /// never silently promoted to paid gratuity.
+    func confirmedIncludedGratuity() -> IncludedGratuityResult {
+        var total: Decimal = 0
+        for charge in detectedCharges where charge.userClassification == .includedGratuity {
+            if let amount = charge.amount { total += amount; continue }
+            if let percentage = charge.percentage {
+                guard let subtotal else { return .needsSubtotal }
+                total += subtotal * percentage / 100
+            }
+        }
+        var rounded = Decimal()
+        var value = total
+        NSDecimalRound(&rounded, &value, currencyMinorUnits(currencyCode), .plain)
+        return .amount(rounded)
+    }
+
     func tipCalculationInput(defaults preferences: UserPreferences = .defaults) -> TipCalculationInput {
         var input = TipCalculationInput.defaults(preferences: preferences)
         input.serviceID = "restaurant"
         input.subtotal = subtotal
         input.tax = tax
         input.finalTotal = total
-        input.currencyCode = currencyCode
+        input.currencyCode = currencyCode.isEmpty ? preferences.homeCurrencyCode : currencyCode
         input.calculationBasis = subtotal == nil ? .finalTotalAfterTax : preferences.tipCalculationBasis
-        let included = detectedCharges.first { charge in
-            charge.userClassification == .includedGratuity || charge.kind == .includedGratuity || charge.kind == .automaticGratuity
-        }
+        let confirmedCharges = detectedCharges.filter { $0.userClassification == .includedGratuity }
         let unsure = detectedCharges.contains { charge in
             charge.userClassification == .serviceChargeUnsure || charge.userClassification == .otherOrUnclear || charge.kind == .serviceCharge || charge.kind == .hospitalityCharge || charge.kind == .administrativeFee
         }
-        input.gratuityStatus = included != nil ? .yes : (unsure ? .unsure : .no)
-        input.includedGratuityAmount = included?.amount
-        input.includedGratuityPercentage = included?.percentage
-        input.includedGratuityEntryMode = included?.amount != nil ? .amount : (included?.percentage != nil ? .percentage : .unknown)
+        input.gratuityStatus = confirmedCharges.isEmpty ? (unsure ? .unsure : .no) : .yes
+        switch confirmedIncludedGratuity() {
+        case let .amount(amount) where !confirmedCharges.isEmpty:
+            input.includedGratuityAmount = amount
+            input.includedGratuityEntryMode = .amount
+        case .needsSubtotal:
+            input.includedGratuityEntryMode = .unknown
+        default: break
+        }
         return input
     }
+}
+
+private func currencyMinorUnits(_ code: String) -> Int {
+    // ISO 4217 currencies in active app use; unknown currencies safely retain cents.
+    ["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"].contains(code.uppercased()) ? 0 : 2
 }
