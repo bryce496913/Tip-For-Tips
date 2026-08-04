@@ -69,6 +69,22 @@ struct V2MigrationReport: Codable, Hashable {
     var succeeded: Bool { partialFailures.isEmpty }
 }
 
+enum LegacyMigrationSourceKind: String, Codable, Hashable { case rootReceipts, intermediateReceipts, notes }
+enum MigrationPhase: String, Codable, Hashable { case rootReceipts, intermediateReceipts, notes }
+struct MigrationRecoveryIssue: Identifiable, Codable, Hashable {
+    let id: UUID
+    let sourceKind: LegacyMigrationSourceKind
+    let sourceRelativePath: String
+    let phase: MigrationPhase
+    let message: String
+    let backupAvailable: Bool
+    let detectedAt: Date
+}
+struct QuarantineManifest: Codable, Hashable {
+    let sourceRelativePath: String; let migrationPhase: MigrationPhase; let failure: String
+    let quarantinedAt: Date; let appVersion: String; let build: String
+}
+
 actor CodableFileStore<Record: Codable & Identifiable> where Record.ID: Hashable {
     private let fileURL: URL
     private let encoder: JSONEncoder
@@ -137,6 +153,7 @@ actor V2MigrationCoordinator {
     private let rootURL: URL
     private let fileManager: FileManager
     private let receiptRepository: ReceiptRepository?
+    private(set) var recoveryIssues: [MigrationRecoveryIssue] = []
 
     init(rootURL: URL? = nil, fileManager: FileManager = .default, receiptRepository: ReceiptRepository? = nil) {
         self.rootURL = rootURL ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -145,6 +162,7 @@ actor V2MigrationCoordinator {
     }
 
     func migrateIfNeeded() async -> V2MigrationReport {
+        recoveryIssues = []
         let markerURL = rootURL.appendingPathComponent("V2/migration-v2-complete.json")
         if let data = try? Data(contentsOf: markerURL), let report = try? JSONDecoder().decode(V2MigrationReport.self, from: data) { return report }
 
@@ -157,10 +175,14 @@ actor V2MigrationCoordinator {
             migratedReceipts += try await migrateRootLegacyReceipts()
             migratedReceipts += try await migrateLegacyReceiptsMetadata()
         }
-        catch { failures.append("Receipts: \(error.localizedDescription)") }
+        catch {
+            failures.append("Receipts: \(error.localizedDescription)")
+            if fileManager.fileExists(atPath: rootURL.appendingPathComponent("receipts.json").path) { recoveryIssues.append(issue(kind: .rootReceipts, path: "receipts.json", phase: .rootReceipts, error: error)) }
+            else if fileManager.fileExists(atPath: rootURL.appendingPathComponent("Receipts/receipts.json").path) { recoveryIssues.append(issue(kind: .intermediateReceipts, path: "Receipts/receipts.json", phase: .intermediateReceipts, error: error)) }
+        }
 
         do { try backupLegacyFileIfPresent(named: "notes.json"); migratedNotes = try await migrateLegacyNotes() }
-        catch { failures.append("Notes: \(error.localizedDescription)") }
+        catch { failures.append("Notes: \(error.localizedDescription)"); recoveryIssues.append(issue(kind: .notes, path: "notes.json", phase: .notes, error: error)) }
 
         let report = V2MigrationReport(fromVersion: 1, toVersion: Self.currentVersion, migratedNotesCount: migratedNotes, migratedReceiptsCount: migratedReceipts, partialFailures: failures, completedAt: Date())
         if report.succeeded {
@@ -171,6 +193,29 @@ actor V2MigrationCoordinator {
             } catch { }
         }
         return report
+    }
+
+    func quarantine(_ issue: MigrationRecoveryIssue, appVersion: String, build: String) throws {
+        let source = rootURL.appendingPathComponent(issue.sourceRelativePath)
+        guard fileManager.fileExists(atPath: source.path) else { return }
+        let safeName = issue.sourceRelativePath.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".json", with: "")
+        let folder = rootURL.appendingPathComponent("V2/Backups/Quarantine/\(Int(Date().timeIntervalSince1970))-\(safeName)")
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        try fileManager.moveItem(at: source, to: folder.appendingPathComponent(source.lastPathComponent))
+        let manifest = QuarantineManifest(sourceRelativePath: issue.sourceRelativePath, migrationPhase: issue.phase, failure: issue.message, quarantinedAt: Date(), appVersion: appVersion, build: build)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(manifest).write(to: folder.appendingPathComponent("quarantine-manifest.json"), options: .atomic)
+    }
+
+    func deleteSource(_ issue: MigrationRecoveryIssue) throws {
+        let source = rootURL.appendingPathComponent(issue.sourceRelativePath).standardizedFileURL
+        guard source.path.hasPrefix(rootURL.standardizedFileURL.path + "/"), fileManager.fileExists(atPath: source.path) else { return }
+        try fileManager.removeItem(at: source)
+    }
+
+    private func issue(kind: LegacyMigrationSourceKind, path: String, phase: MigrationPhase, error: Error) -> MigrationRecoveryIssue {
+        let backup = rootURL.appendingPathComponent("V2/Backups/\((path as NSString).lastPathComponent).v1-backup")
+        return .init(id: UUID(), sourceKind: kind, sourceRelativePath: path, phase: phase, message: "Legacy \(kind.rawValue) data could not be decoded.", backupAvailable: fileManager.fileExists(atPath: backup.path), detectedAt: Date())
     }
 
     private func backupLegacyFileIfPresent(named fileName: String) throws {
