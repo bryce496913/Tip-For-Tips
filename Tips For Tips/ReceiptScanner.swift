@@ -60,7 +60,6 @@ struct ReceiptAmountParser {
         guard !cleaned.isEmpty, cleaned.range(of: #"[A-Za-z]"#, options: .regularExpression) == nil else { return nil }
         guard cleaned.allSatisfy({ $0.isNumber || $0 == "." || $0 == "," }) else { return nil }
         let decimalSeparator = locale.decimalSeparator ?? "."
-        let groupingSeparator = locale.groupingSeparator ?? ","
         let dotCount = cleaned.filter { $0 == "." }.count
         let commaCount = cleaned.filter { $0 == "," }.count
         let actualDecimal: Character?
