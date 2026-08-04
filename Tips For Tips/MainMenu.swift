@@ -352,7 +352,7 @@ struct ReceiptDetailView: View {
     }
 
     private func replacementLink(_ title: String, _ receipt: ReceiptRecord) -> some View {
-        NavigationLink { ReceiptScannerView(context: .replaceImage(receiptID: receipt.id), preferences: preferences, repository: repository, calculationRepository: calculationRepository) } label: { Label(title, systemImage: "camera") }
+        NavigationLink { ReceiptScannerView(context: .replaceImage(receipt.id), preferences: preferences, repository: repository, calculationRepository: calculationRepository) } label: { Label(title, systemImage: "camera") }
     }
 
     private func reload() async {
