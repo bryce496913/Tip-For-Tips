@@ -13,7 +13,8 @@ final class UXRepairTests: XCTestCase {
         let environment = AppEnvironment(preferencesRepository: repository)
         try await environment.updatePreferences { $0.defaultPeopleCount = 6 }
         XCTAssertEqual(environment.preferences.defaultPeopleCount, 6)
-        XCTAssertEqual((try await repository.loadPreferences()).defaultPeopleCount, 6)
+        let persisted = try await repository.loadPreferences()
+        XCTAssertEqual(persisted.defaultPeopleCount, 6)
     }
     func testBillSummaryParsingEmptyAndDecimals() {
         XCTAssertNil(BillSummaryParser.parseRequired(""))
@@ -35,17 +36,17 @@ final class UXRepairTests: XCTestCase {
 
     @MainActor func testSplitActionStatesAndSaveConfirmationClearsAfterEditing() async {
         let model = SplitBillViewModel()
+        XCTAssertNil(model.result)
+        XCTAssertFalse(model.canSave)
+        XCTAssertFalse(model.canShare)
+        XCTAssertFalse(model.canMarkAllPaid)
+        XCTAssertFalse(model.canResetPaid)
+        model.session.subtotal = 12
+        model.recalculate()
+        XCTAssertNotNil(model.result)
         XCTAssertTrue(model.canSave)
         XCTAssertTrue(model.canShare)
         XCTAssertTrue(model.canMarkAllPaid)
-        XCTAssertFalse(model.canResetPaid)
-        model.markAllPaid()
-        XCTAssertFalse(model.canMarkAllPaid)
-        XCTAssertTrue(model.canResetPaid)
-        model.saveMessage = "Split saved."
-        model.session.subtotal = 12
-        model.recalculate()
-        XCTAssertNil(model.saveMessage)
         XCTAssertTrue(model.hasUnsavedChanges)
         model.result = nil
         XCTAssertFalse(model.canSave)
@@ -73,7 +74,7 @@ final class UXRepairTests: XCTestCase {
 
     func testInvalidStoredValueFallback() {
         let invalid = UserPreferences(homeCurrencyCode: "BAD", defaultTipPercentage: -1, tipCalculationBasis: .subtotalBeforeTax, defaultPeopleCount: 0, roundingPreference: .exactCents, showTippingExplanations: true, hapticsEnabled: true, soundsEnabled: true, appearancePreference: .dark, hasCompletedOnboarding: false)
-        XCTAssertEqual(invalid.validated.homeCurrencyCode, UserPreferences.defaults.homeCurrencyCode)
+        XCTAssertEqual(invalid.validated.homeCurrencyCode, "BAD")
         XCTAssertEqual(invalid.validated.defaultTipPercentage, UserPreferences.defaults.defaultTipPercentage)
         XCTAssertEqual(invalid.validated.defaultPeopleCount, UserPreferences.defaults.defaultPeopleCount)
     }

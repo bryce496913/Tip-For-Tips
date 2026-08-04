@@ -49,11 +49,13 @@ enum RoundingPreference: String, Codable, CaseIterable, Identifiable, Hashable {
     case roundEachPaymentUpToDollar
     case roundToNearestDollar
     var id: String { rawValue }
+    var title: String { switch self { case .exactCents: return "Exact cents"; case .roundEachPaymentUpToDollar: return "Round each payment up"; case .roundToNearestDollar: return "Nearest dollar" } }
 }
 
 enum AppearancePreference: String, Codable, CaseIterable, Identifiable, Hashable {
     case system, dark, light
     var id: String { rawValue }
+    var title: String { switch self { case .system: return "System"; case .dark: return "Dark"; case .light: return "Light" } }
 }
 
 enum TippingServiceCategory: String, Codable, CaseIterable, Identifiable, Hashable {

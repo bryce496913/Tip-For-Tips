@@ -212,3 +212,86 @@ final class IncludedGratuityPercentageReleaseTests: XCTestCase {
         XCTAssertEqual(result.finalTotal, 120)
     }
 }
+
+private actor IdentityCalculationRepository: CalculationRepository {
+    private var records: [SavedCalculationRecord] = []
+    func fetchCalculations() async throws -> [SavedCalculationRecord] { records }
+    func saveCalculation(_ record: SavedCalculationRecord) async throws { records.removeAll { $0.id == record.id }; records.append(record) }
+    func deleteCalculation(id: UUID) async throws { records.removeAll { $0.id == id } }
+}
+
+final class ScannerEnvironmentRegressionTests: XCTestCase {
+    @MainActor func testScannerRetainsInjectedCalculationRepositoryIdentityAndPreferences() {
+        let repository = IdentityCalculationRepository()
+        var preferences = UserPreferences.defaults
+        preferences.homeCurrencyCode = "EUR"
+        preferences.defaultPeopleCount = 4
+        preferences.showTippingExplanations = false
+        let model = ReceiptScannerViewModel(preferences: preferences, calculationRepository: repository)
+
+        XCTAssertTrue((model.calculationRepository as AnyObject) === repository)
+        model.startManualEntry()
+        model.draft?.subtotalText = "20"
+        model.continueToAssistant()
+        XCTAssertEqual(model.pendingTipInput?.currencyCode, "EUR")
+        XCTAssertEqual(model.pendingTipInput?.peopleCount, 4)
+        XCTAssertEqual(model.preferences.showTippingExplanations, false)
+    }
+
+    @MainActor func testReceiptCurrencyOverridesHomeCurrency() {
+        var preferences = UserPreferences.defaults; preferences.homeCurrencyCode = "EUR"
+        let model = ReceiptScannerViewModel(preferences: preferences, calculationRepository: IdentityCalculationRepository())
+        model.startManualEntry(); model.draft?.subtotalText = "20"; model.draft?.currencyCode = "CAD"
+        model.continueToAssistant()
+        XCTAssertEqual(model.pendingTipInput?.currencyCode, "CAD")
+    }
+
+    @MainActor func testManualDraftDirtyStateSnapshotsAfterSave() async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let model = ReceiptScannerViewModel(preferences: .defaults, repository: FileReceiptRepository(rootURL: root), calculationRepository: IdentityCalculationRepository())
+        model.startManualEntry()
+        XCTAssertFalse(model.hasUnsavedChanges)
+        model.draft?.merchantName = "Cafe"
+        XCTAssertTrue(model.hasUnsavedChanges)
+        let savedID = await model.saveReceipt()
+        XCTAssertNotNil(savedID)
+        XCTAssertFalse(model.hasUnsavedChanges)
+        model.draft?.notes = "Changed"
+        XCTAssertTrue(model.hasUnsavedChanges)
+    }
+}
+
+final class MigrationRecoveryRegressionTests: XCTestCase {
+    func testCorruptRootReceiptCanBeQuarantinedWithoutTouchingV2Data() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("{ corrupt".utf8).write(to: root.appendingPathComponent("receipts.json"))
+        let coordinator = V2MigrationCoordinator(rootURL: root)
+        let failed = await coordinator.migrateIfNeeded()
+        XCTAssertFalse(failed.succeeded)
+        let issues = await coordinator.recoveryIssues
+        let issue = try XCTUnwrap(issues.first)
+        try await coordinator.quarantine(issue, appVersion: "2.0", build: "27")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("receipts.json").path))
+        let quarantine = root.appendingPathComponent("V2/Backups/Quarantine")
+        let folders = try FileManager.default.contentsOfDirectory(at: quarantine, includingPropertiesForKeys: nil)
+        XCTAssertEqual(folders.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folders[0].appendingPathComponent("quarantine-manifest.json").path))
+        let retried = await coordinator.migrateIfNeeded()
+        XCTAssertTrue(retried.succeeded)
+    }
+
+    func testDeleteRecoverySourceLeavesExistingV2Metadata() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let v2 = root.appendingPathComponent("V2/Receipts/receipts.json")
+        try FileManager.default.createDirectory(at: v2.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let existing = Data("existing-v2".utf8); try existing.write(to: v2)
+        try Data("bad".utf8).write(to: root.appendingPathComponent("receipts.json"))
+        let coordinator = V2MigrationCoordinator(rootURL: root)
+        _ = await coordinator.migrateIfNeeded()
+        let issues = await coordinator.recoveryIssues
+        let issue = try XCTUnwrap(issues.first)
+        try await coordinator.deleteSource(issue)
+        XCTAssertEqual(try Data(contentsOf: v2), existing)
+    }
+}
