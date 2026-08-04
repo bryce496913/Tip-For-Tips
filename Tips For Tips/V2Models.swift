@@ -269,7 +269,11 @@ struct DetectedReceiptCharge: Identifiable, Codable, Hashable {
     var kind: ReceiptChargeKind
     var confidence: Decimal
     var userClassification: ReceiptChargeClassification? = nil
+    var isIncludedInReceiptTotal: Bool? = nil
+    var source: ReceiptChargeSource = .ocr
 }
+
+enum ReceiptChargeSource: String, Codable, Hashable { case ocr, manual, migrated }
 
 enum ReceiptConfirmationStatus: String, Codable, Hashable {
     case imported
@@ -293,13 +297,14 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
     var confirmationStatus: ReceiptConfirmationStatus
     var createdAt: Date
     var updatedAt: Date
+    var financialReviewVersion: Int?
 
     var displayName: String { merchantName?.isEmpty == false ? merchantName! : "Receipt" }
     var hasUnreviewedFinancialCharges: Bool {
         detectedCharges.contains { charge in
             [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge,
              .administrativeFee, .suggestedGratuity, .deliveryFee].contains(charge.kind)
-                && (charge.userClassification == nil || charge.userClassification == .unreviewed)
+                && (financialReviewVersion == nil || charge.userClassification == nil || charge.userClassification == .unreviewed)
         }
     }
 
@@ -314,14 +319,14 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
         return values
     }
 
-    init(id: UUID, merchantName: String?, receiptDate: Date?, currencyCode: String = "USD", subtotal: Decimal?, tax: Decimal?, total: Decimal?, detectedCharges: [DetectedReceiptCharge], imageFilename: String?, thumbnailFilename: String?, recognizedText: String? = nil, notes: String, confirmationStatus: ReceiptConfirmationStatus = .imported, createdAt: Date, updatedAt: Date) {
-        self.id = id; self.merchantName = merchantName; self.receiptDate = receiptDate; self.currencyCode = currencyCode; self.subtotal = subtotal; self.tax = tax; self.total = total; self.detectedCharges = detectedCharges; self.imageFilename = imageFilename; self.thumbnailFilename = thumbnailFilename; self.recognizedText = recognizedText; self.notes = notes; self.confirmationStatus = confirmationStatus; self.createdAt = createdAt; self.updatedAt = updatedAt
+    init(id: UUID, merchantName: String?, receiptDate: Date?, currencyCode: String = "USD", subtotal: Decimal?, tax: Decimal?, total: Decimal?, detectedCharges: [DetectedReceiptCharge], imageFilename: String?, thumbnailFilename: String?, recognizedText: String? = nil, notes: String, confirmationStatus: ReceiptConfirmationStatus = .imported, createdAt: Date, updatedAt: Date, financialReviewVersion: Int? = nil) {
+        self.id = id; self.merchantName = merchantName; self.receiptDate = receiptDate; self.currencyCode = currencyCode; self.subtotal = subtotal; self.tax = tax; self.total = total; self.detectedCharges = detectedCharges; self.imageFilename = imageFilename; self.thumbnailFilename = thumbnailFilename; self.recognizedText = recognizedText; self.notes = notes; self.confirmationStatus = confirmationStatus; self.createdAt = createdAt; self.updatedAt = updatedAt; self.financialReviewVersion = financialReviewVersion
     }
 
-    enum CodingKeys: String, CodingKey { case id, merchantName, receiptDate, currencyCode, subtotal, tax, total, detectedCharges, imageFilename, thumbnailFilename, recognizedText, notes, confirmationStatus, createdAt, updatedAt }
+    enum CodingKeys: String, CodingKey { case id, merchantName, receiptDate, currencyCode, subtotal, tax, total, detectedCharges, imageFilename, thumbnailFilename, recognizedText, notes, confirmationStatus, createdAt, updatedAt, financialReviewVersion }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(UUID.self, forKey: .id); merchantName = try c.decodeIfPresent(String.self, forKey: .merchantName); receiptDate = try c.decodeIfPresent(Date.self, forKey: .receiptDate); currencyCode = try c.decodeIfPresent(String.self, forKey: .currencyCode) ?? "USD"; subtotal = try c.decodeIfPresent(Decimal.self, forKey: .subtotal); tax = try c.decodeIfPresent(Decimal.self, forKey: .tax); total = try c.decodeIfPresent(Decimal.self, forKey: .total); detectedCharges = try c.decodeIfPresent([DetectedReceiptCharge].self, forKey: .detectedCharges) ?? []; imageFilename = try c.decodeIfPresent(String.self, forKey: .imageFilename); thumbnailFilename = try c.decodeIfPresent(String.self, forKey: .thumbnailFilename); recognizedText = try c.decodeIfPresent(String.self, forKey: .recognizedText); notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""; confirmationStatus = try c.decodeIfPresent(ReceiptConfirmationStatus.self, forKey: .confirmationStatus) ?? .imported; createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(); updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        id = try c.decode(UUID.self, forKey: .id); merchantName = try c.decodeIfPresent(String.self, forKey: .merchantName); receiptDate = try c.decodeIfPresent(Date.self, forKey: .receiptDate); currencyCode = try c.decodeIfPresent(String.self, forKey: .currencyCode) ?? "USD"; subtotal = try c.decodeIfPresent(Decimal.self, forKey: .subtotal); tax = try c.decodeIfPresent(Decimal.self, forKey: .tax); total = try c.decodeIfPresent(Decimal.self, forKey: .total); detectedCharges = try c.decodeIfPresent([DetectedReceiptCharge].self, forKey: .detectedCharges) ?? []; imageFilename = try c.decodeIfPresent(String.self, forKey: .imageFilename); thumbnailFilename = try c.decodeIfPresent(String.self, forKey: .thumbnailFilename); recognizedText = try c.decodeIfPresent(String.self, forKey: .recognizedText); notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""; confirmationStatus = try c.decodeIfPresent(ReceiptConfirmationStatus.self, forKey: .confirmationStatus) ?? .imported; createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(); updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt; financialReviewVersion = try c.decodeIfPresent(Int.self, forKey: .financialReviewVersion)
     }
 }
 
@@ -621,6 +626,46 @@ extension ReceiptRecord {
         default: break
         }
         return input
+    }
+}
+
+
+struct ReceiptFinancialReview: Equatable, Sendable {
+    var unreviewedChargeIDs: [UUID]
+    var invalidChargeIDs: [UUID]
+    var warnings: [ReceiptFinancialWarning]
+    var isReadyForFinancialUse: Bool { unreviewedChargeIDs.isEmpty && invalidChargeIDs.isEmpty }
+}
+
+enum ReceiptFinancialWarning: Equatable, Sendable {
+    case unreviewedCharge(UUID)
+    case missingChargeValue(UUID)
+    case missingSubtotalForPercentage(UUID)
+    case conflictingAmountAndPercentage(UUID)
+    case unknownIncludedInTotal(UUID)
+}
+
+struct ReceiptFinancialReviewValidator: Sendable {
+    static let currentVersion = 1
+    func review(_ receipt: ReceiptRecord) -> ReceiptFinancialReview {
+        var unreviewed: [UUID] = []
+        var invalid: [UUID] = []
+        var warnings: [ReceiptFinancialWarning] = []
+        for charge in receipt.detectedCharges {
+            let relevant = [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge, .administrativeFee, .suggestedGratuity, .deliveryFee].contains(charge.kind) || charge.userClassification == .includedGratuity || charge.userClassification == .serviceChargeUnsure
+            guard relevant else { continue }
+            if receipt.financialReviewVersion == nil || charge.userClassification == nil || charge.userClassification == .unreviewed { unreviewed.append(charge.id); warnings.append(.unreviewedCharge(charge.id)) }
+            if charge.userClassification == .includedGratuity {
+                if charge.amount == nil && charge.percentage == nil { invalid.append(charge.id); warnings.append(.missingChargeValue(charge.id)) }
+                if charge.percentage != nil && charge.amount == nil && receipt.subtotal == nil { invalid.append(charge.id); warnings.append(.missingSubtotalForPercentage(charge.id)) }
+                if let pct = charge.percentage, let amount = charge.amount, let subtotal = receipt.subtotal {
+                    let expected = subtotal * pct / 100
+                    if abs((expected as NSDecimalNumber).doubleValue - (amount as NSDecimalNumber).doubleValue) > 0.01 { invalid.append(charge.id); warnings.append(.conflictingAmountAndPercentage(charge.id)) }
+                }
+                if charge.isIncludedInReceiptTotal == nil { invalid.append(charge.id); warnings.append(.unknownIncludedInTotal(charge.id)) }
+            }
+        }
+        return ReceiptFinancialReview(unreviewedChargeIDs: Array(Set(unreviewed)), invalidChargeIDs: Array(Set(invalid)), warnings: warnings)
     }
 }
 

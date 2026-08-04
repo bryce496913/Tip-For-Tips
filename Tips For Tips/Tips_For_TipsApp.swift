@@ -11,10 +11,12 @@ final class AppEnvironment: ObservableObject {
     let calculationRepository: CalculationRepository
     let currencyRateRepository: CurrencyRateRepository
     let migrationCoordinator: V2MigrationCoordinator
+    let dataService: (any AppDataExporting & AppDataManaging)
 
     init(preferencesRepository: UserPreferencesRepository = FileUserPreferencesRepository(), receiptRepository: ReceiptRepository = FileReceiptRepository(), calculationRepository: CalculationRepository = FileCalculationRepository(), currencyRateRepository: CurrencyRateRepository = FileCurrencyRateRepository(), migrationCoordinator: V2MigrationCoordinator? = nil) {
         self.preferencesRepository = preferencesRepository; self.receiptRepository = receiptRepository; self.calculationRepository = calculationRepository; self.currencyRateRepository = currencyRateRepository
         self.migrationCoordinator = migrationCoordinator ?? V2MigrationCoordinator(receiptRepository: receiptRepository)
+        self.dataService = FileAppDataService(receiptRepository: receiptRepository, calculationRepository: calculationRepository, preferencesRepository: preferencesRepository)
     }
     /// Migration must finish before preferences are published and workflows become reachable.
     func prepare() async {
@@ -26,6 +28,7 @@ final class AppEnvironment: ObservableObject {
     }
     func updatePreferences(_ mutation: (inout UserPreferences) -> Void) async throws { var updated = preferences; mutation(&updated); updated = updated.validated; try await preferencesRepository.savePreferences(updated); preferences = updated }
     func quarantineAndRetry(_ issue: MigrationRecoveryIssue) async { do { try await migrationCoordinator.quarantine(issue, appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown", build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"); await prepare() } catch { startupError = "The unreadable legacy source could not be quarantined. Try again or export recovery details." } }
+    func resetAfterDataDeletion() async { await prepare() }
     func deleteAndRetry(_ issue: MigrationRecoveryIssue) async { do { try await migrationCoordinator.deleteSource(issue); await prepare() } catch { startupError = "The selected unreadable legacy source could not be deleted." } }
 }
 

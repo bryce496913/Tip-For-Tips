@@ -321,9 +321,11 @@ struct ReceiptDetailView: View {
                     if case .needsSubtotal = receipt.confirmedIncludedGratuity() { Text("Enter a subtotal to review percentage-based included gratuity.").foregroundStyle(AppTheme.highlight) }
                     Text(receipt.notes.isEmpty ? "No notes" : receipt.notes).appFont(.body)
                     ShareLink(item: ShareSummaryBuilder().receiptSummary(receipt)) { Text("Share summary only") }
-                    NavigationLink { GuidedTipAssistantView(preferences: preferences, prefilledInput: receipt.tipCalculationInput(defaults: preferences), linkedReceiptID: receipt.id, repository: calculationRepository) } label: { Label("Calculate Tip", systemImage: "percent") }
-                    NavigationLink { SplitBillCalculator(context: .receipt(receipt), preferences: preferences, repository: calculationRepository) } label: { Label("Split Bill", systemImage: "person.2") }
-                    NavigationLink { CurrencyConverter(context: CurrencyConversionContext(sourceCurrencyCode: receipt.currencyCode.isEmpty ? preferences.homeCurrencyCode : receipt.currencyCode, values: receipt.convertibleAmounts, sourceRecordID: receipt.id), preferences: preferences, repository: currencyRateRepository) } label: { Label("Convert Currency", systemImage: "arrow.left.arrow.right") }
+                    let review = ReceiptFinancialReviewValidator().review(receipt)
+                    if !review.isReadyForFinancialUse { Label("Review receipt charges", systemImage: "exclamationmark.triangle").foregroundStyle(AppTheme.highlight); Text("This receipt contains gratuity or service-charge information that has not been fully confirmed. Review the charges before calculating, splitting, or converting the bill.").appFont(.body); NavigationLink { ReceiptScannerView(context: .newReceipt, preferences: preferences, repository: repository, calculationRepository: calculationRepository) } label: { Label("Edit and Review Charges", systemImage: "pencil") } }
+                    NavigationLink { GuidedTipAssistantView(preferences: preferences, prefilledInput: receipt.tipCalculationInput(defaults: preferences), linkedReceiptID: receipt.id, repository: calculationRepository) } label: { Label("Calculate Tip", systemImage: "percent") }.disabled(!review.isReadyForFinancialUse)
+                    NavigationLink { SplitBillCalculator(context: .receipt(receipt), preferences: preferences, repository: calculationRepository) } label: { Label("Split Bill", systemImage: "person.2") }.disabled(!review.isReadyForFinancialUse)
+                    NavigationLink { CurrencyConverter(context: CurrencyConversionContext(sourceCurrencyCode: receipt.currencyCode.isEmpty ? preferences.homeCurrencyCode : receipt.currencyCode, values: receipt.convertibleAmounts, sourceRecordID: receipt.id), preferences: preferences, repository: currencyRateRepository) } label: { Label("Convert Currency", systemImage: "arrow.left.arrow.right") }.disabled(!review.isReadyForFinancialUse)
                 }
             } else { EmptyStateView(systemImage: "doc.text.magnifyingglass", title: "Related record no longer available", message: "This receipt could not be found.") }
         }.padding(AppSpacing.screen) } }.navigationTitle("Receipt").task { await reload() }
@@ -378,6 +380,7 @@ struct SplitDetailSummary: View { let result: SplitCalculationResult; var body: 
 final class SettingsViewModel: ObservableObject {
     @Published var preferences: UserPreferences
     @Published var statusMessage: String?
+    @Published var exportURL: URL?
     private let repository: UserPreferencesRepository
 
     init(preferences: UserPreferences = .defaults, repository: UserPreferencesRepository = FileUserPreferencesRepository()) {
@@ -402,8 +405,10 @@ struct SettingsView: View {
     @StateObject private var model: SettingsViewModel
     @State private var activeSheet: SettingsSheet?
     init(initialPreferences: UserPreferences = .defaults, repository: UserPreferencesRepository = FileUserPreferencesRepository()) { _model = StateObject(wrappedValue: SettingsViewModel(preferences: initialPreferences, repository: repository)) }
-    var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { ScreenTitle(text: "Preferences", subtitle: "Choose your default currency, tipping preferences, and local data options."); defaultsCard; privacyCard; aboutCard }.padding(AppSpacing.screen) } }.navigationTitle("Settings").navigationBarTitleDisplayMode(.inline).onReceive(appEnvironment.$preferences) { model.preferences = $0 }.sheet(item: $activeSheet) { sheet in NavigationStack { sheetContent(sheet) } } }
+    var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { ScreenTitle(text: "Preferences", subtitle: "Choose your default currency, tipping preferences, and local data options."); defaultsCard; dataCard; privacyCard; aboutCard }.padding(AppSpacing.screen) } }.navigationTitle("Settings").navigationBarTitleDisplayMode(.inline).onReceive(appEnvironment.$preferences) { model.preferences = $0 }.sheet(item: $activeSheet) { sheet in NavigationStack { sheetContent(sheet) } } }
     private var defaultsCard: some View { ThemedCard { Text("Defaults").appFont(.title2); SettingsButtonRow(title: "Home currency", subtitle: "Used as your default conversion currency", value: "\(currencyName(model.preferences.homeCurrencyCode)) (\(model.preferences.homeCurrencyCode))") { activeSheet = .currency }; SettingsButtonRow(title: "Default tip", subtitle: "Suggested starting percentage", value: "\(model.preferences.defaultTipPercentage)%") { activeSheet = .tip }; SettingsButtonRow(title: "Tip basis", subtitle: "How new tip calculations start", value: model.preferences.tipCalculationBasis.title) { activeSheet = .basis }; SettingsButtonRow(title: "Default people", subtitle: "Used for new guided tips and splits", value: "\(model.preferences.defaultPeopleCount)") { activeSheet = .people }; Picker("Default rounding", selection: Binding(get: { model.preferences.roundingPreference }, set: { value in updateLive { $0.roundingPreference = value } })) { ForEach(RoundingPreference.allCases) { Text($0.title).tag($0) } }; Picker("Appearance", selection: Binding(get: { model.preferences.appearancePreference }, set: { value in updateLive { $0.appearancePreference = value } })) { ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) } }; Toggle(isOn: Binding(get: { model.preferences.showTippingExplanations }, set: { value in updateLive { $0.showTippingExplanations = value } })) { VStack(alignment: .leading, spacing: AppSpacing.xSmall) { Text("Show explanations").appFont(.body); Text("Hide optional guidance when off; warnings and validation remain visible.").appFont(.footnote).foregroundStyle(AppTheme.secondaryText) } }.tint(AppTheme.accent).accessibilityValue(model.preferences.showTippingExplanations ? "On" : "Off"); Button("Restart Onboarding") { updateLive { $0.hasCompletedOnboarding = false } }; if let status = model.statusMessage { Text(status).appFont(.footnote).foregroundStyle(AppTheme.secondaryText) } } }
+
+    private var dataCard: some View { ThemedCard { Text("Data Management").appFont(.title2); Button("Export App Data") { Task { do { let url = try await appEnvironment.dataService.createExport(includeRecoveryData: false); model.exportURL = url } catch { model.statusMessage = "Export failed. Try again or free up storage." } } }; NavigationLink("Data Management") { DataManagementView(service: appEnvironment.dataService) }; Button("Delete All Local Data", role: .destructive) { Task { let report = await appEnvironment.dataService.deleteAllLocalData(includeRecoveryData: false); model.statusMessage = report.completedFully ? "All local app data was deleted." : "Some local data could not be deleted."; await appEnvironment.resetAfterDataDeletion() } } }.sheet(item: $model.exportURL) { url in ShareSheet(items: [url]) } }
     @ViewBuilder private var privacyCard: some View { ThemedCard { Text("Privacy and local data").appFont(.title2); Text("Saved calculations, receipts, notes, and preferences are stored locally on this device. Receipt text recognition uses on-device Apple Vision when scanning is available.").appFont(.body); Link("Privacy Policy", destination: AppLinks.privacyPolicy); Link("Support and Feedback", destination: AppLinks.support) } }
     private var aboutCard: some View { ThemedCard { Text("About").appFont(.title2); ResultSummaryRow(label: "App", value: "Tips for Tips"); ResultSummaryRow(label: "Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1"); ResultSummaryRow(label: "Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1") } }
     @ViewBuilder private func sheetContent(_ sheet: SettingsSheet) -> some View { switch sheet { case .currency: CurrencySelectionView(selectedCode: model.preferences.homeCurrencyCode) { code in updateLive { $0.homeCurrencyCode = code }; activeSheet = nil }; case .tip: DefaultTipEditor(value: model.preferences.defaultTipPercentage) { tip in updateLive { $0.defaultTipPercentage = tip }; activeSheet = nil }; case .basis: TipBasisEditor(value: model.preferences.tipCalculationBasis) { basis in updateLive { $0.tipCalculationBasis = basis }; activeSheet = nil }; case .people: DefaultPeopleEditor(value: model.preferences.defaultPeopleCount) { count in updateLive { $0.defaultPeopleCount = count }; activeSheet = nil } } }
@@ -419,6 +424,68 @@ struct CurrencySelectionView: View { let selectedCode: String; let onSelect: (St
 struct DefaultTipEditor: View { let value: Decimal; let onSave: (Decimal) -> Void; @Environment(\.dismiss) private var dismiss; @State private var customText = ""; private let options: [Decimal] = [15, 18, 20, 22]; var body: some View { Form { Section("Common values") { ForEach(options, id: \.self) { option in Button { onSave(option) } label: { Text(verbatim: "\(option)%") } } }; Section("Custom") { TextField("Percent", text: $customText).keyboardType(.decimalPad); Button("Done") { if let parsed = LocalizedDecimalParser.parse(customText), parsed >= 0, parsed <= 100 { onSave(parsed) } } } }.navigationTitle("Default Tip").onAppear { customText = "\(value)" }.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } } } }
 struct TipBasisEditor: View { let value: TipCalculationBasis; let onSave: (TipCalculationBasis) -> Void; @Environment(\.dismiss) private var dismiss; var body: some View { List(TipCalculationBasis.allCases) { basis in Button { onSave(basis) } label: { HStack { VStack(alignment: .leading) { Text(basis.title); Text(basis == .subtotalBeforeTax ? "Tips are based on the pre-tax subtotal." : "Tips are based on the after-tax final total.").font(.footnote) }; Spacer(); if basis == value { Image(systemName: "checkmark") } } } }.navigationTitle("Tip Basis").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } } } }
 struct DefaultPeopleEditor: View { let value: Int; let onSave: (Int) -> Void; @Environment(\.dismiss) private var dismiss; @State private var count = 1; var body: some View { Form { Stepper(value: $count, in: 1...99) { Text("\(count) people") }; Button("Done") { onSave(count) } }.navigationTitle("Default People").onAppear { count = min(max(value, 1), 99) }.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } } } }
+struct ShareSheet: UIViewControllerRepresentable { let items: [Any]; func makeUIViewController(context: Context) -> UIActivityViewController { UIActivityViewController(activityItems: items, applicationActivities: nil) }; func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {} }
+extension URL: @retroactive Identifiable { public var id: String { absoluteString } }
+
+struct DataManagementView: View {
+    let service: any AppDataManaging
+    @State private var summary: AppDataSummary?
+    @State private var message: String?
+    var body: some View {
+        VStack {
+            List {
+                if let s = summary {
+                    Section("Summary") {
+                        LabeledContent("Receipts", value: "\(s.receiptCount)")
+                        LabeledContent("Calculations", value: "\(s.calculationCount)")
+                        LabeledContent("Splits", value: "\(s.splitCount)")
+                        LabeledContent("Notes", value: "\(s.noteCount)")
+                        LabeledContent("Guide bookmarks", value: "\(s.guideBookmarkCount)")
+                        LabeledContent("Favorite currencies", value: "\(s.favoriteCurrencyCount)")
+                        LabeledContent("Recent currency pairs", value: "\(s.recentCurrencyPairCount)")
+                        LabeledContent("Cached exchange rates", value: "\(s.cachedExchangeRateCount)")
+                        LabeledContent("Receipt-image storage", value: ByteCountFormatter.string(fromByteCount: s.receiptImageStorage, countStyle: .file))
+                        LabeledContent("Total app-data storage", value: ByteCountFormatter.string(fromByteCount: s.totalAppDataStorage, countStyle: .file))
+                        LabeledContent("Migration-backup storage", value: ByteCountFormatter.string(fromByteCount: s.migrationBackupStorage, countStyle: .file))
+                        LabeledContent("Quarantined sources", value: "\(s.quarantinedSourceCount)")
+                    }
+                    Section("Delete") {
+                        deleteButton("Delete Receipts and Images") { await service.deleteReceipts() }
+                        deleteButton("Delete Calculations and History") { await service.deleteCalculations() }
+                        deleteButton("Delete Saved Splits") { await service.deleteSplits() }
+                        deleteButton("Delete Notes") { await service.deleteNotes() }
+                        deleteButton("Clear Currency Cache") { await service.clearCurrencyCache() }
+                        deleteButton("Clear Favorite Currencies") { await service.clearCurrencyFavorites() }
+                        deleteButton("Clear Recent Currency Pairs") { await service.clearRecentCurrencyPairs() }
+                        deleteButton("Clear Guide Bookmarks and Recents") { await service.clearGuideData() }
+                        deleteButton("Reset Preferences") { await service.resetPreferences() }
+                        deleteButton("Reset Onboarding") { await service.resetOnboarding() }
+                        deleteButton("Delete Migration Markers") { await service.deleteMigrationMarkers() }
+                        deleteButton("Delete Migration Backups") { await service.deleteMigrationBackups() }
+                        deleteButton("Delete Quarantined Legacy Data") { await service.deleteQuarantinedLegacyData() }
+                        deleteButton("Delete Temporary Export and Recovery Files") { await service.deleteTemporaryAndRecoveryFiles() }
+                        deleteButton("Delete All Local Data") { await service.deleteAllLocalData(includeRecoveryData: false) }
+                    }
+                } else {
+                    ProgressView("Loading data summary…")
+                }
+            }
+            if let message { Text(message).foregroundStyle(AppTheme.secondaryText).padding() }
+        }
+        .navigationTitle("Data Management")
+        .task { summary = try? await service.loadSummary() }
+    }
+    private func deleteButton(_ title: String, action: @escaping () async -> DataDeletionReport) -> some View {
+        Button(title, role: .destructive) {
+            Task {
+                let r = await action()
+                message = r.completedFully ? "Completed: \(title)" : "Partial failure: \(r.failures.map(\.message).joined(separator: ", "))"
+                summary = try? await service.loadSummary()
+            }
+        }
+    }
+}
+
 func currencyName(_ code: String) -> String { Locale.current.localizedString(forCurrencyCode: code) ?? code }
 
 #Preview { MainMenu() }
