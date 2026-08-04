@@ -70,7 +70,10 @@ struct V2MigrationReport: Codable, Hashable {
 }
 
 enum LegacyMigrationSourceKind: String, Codable, Hashable { case rootReceipts, intermediateReceipts, notes }
-enum MigrationPhase: String, Codable, Hashable { case rootReceipts, intermediateReceipts, notes }
+enum MigrationPhase: String, Codable, Hashable {
+    case rootEmbeddedReceipts, intermediateReceiptMetadata, intermediateReceiptImages
+    case timestampedNotes, legacyNotesEnvelope, verification
+}
 struct MigrationRecoveryIssue: Identifiable, Codable, Hashable {
     let id: UUID
     let sourceKind: LegacyMigrationSourceKind
@@ -173,16 +176,20 @@ actor V2MigrationCoordinator {
         do {
             try backupLegacyFileIfPresent(named: "receipts.json")
             migratedReceipts += try await migrateRootLegacyReceipts()
-            migratedReceipts += try await migrateLegacyReceiptsMetadata()
+        } catch {
+            failures.append("receipts.json: \(error.localizedDescription)")
+            recoveryIssues.append(issue(kind: .rootReceipts, path: "receipts.json", phase: .rootEmbeddedReceipts, error: error))
         }
-        catch {
-            failures.append("Receipts: \(error.localizedDescription)")
-            if fileManager.fileExists(atPath: rootURL.appendingPathComponent("receipts.json").path) { recoveryIssues.append(issue(kind: .rootReceipts, path: "receipts.json", phase: .rootReceipts, error: error)) }
-            else if fileManager.fileExists(atPath: rootURL.appendingPathComponent("Receipts/receipts.json").path) { recoveryIssues.append(issue(kind: .intermediateReceipts, path: "Receipts/receipts.json", phase: .intermediateReceipts, error: error)) }
+
+        do {
+            migratedReceipts += try await migrateLegacyReceiptsMetadata()
+        } catch {
+            failures.append("Receipts/receipts.json: \(error.localizedDescription)")
+            recoveryIssues.append(issue(kind: .intermediateReceipts, path: "Receipts/receipts.json", phase: .intermediateReceiptMetadata, error: error))
         }
 
         do { try backupLegacyFileIfPresent(named: "notes.json"); migratedNotes = try await migrateLegacyNotes() }
-        catch { failures.append("Notes: \(error.localizedDescription)"); recoveryIssues.append(issue(kind: .notes, path: "notes.json", phase: .notes, error: error)) }
+        catch { failures.append("Notes/notes.json: \(error.localizedDescription)"); recoveryIssues.append(issue(kind: .notes, path: "Notes/notes.json", phase: .legacyNotesEnvelope, error: error)) }
 
         let report = V2MigrationReport(fromVersion: 1, toVersion: Self.currentVersion, migratedNotesCount: migratedNotes, migratedReceiptsCount: migratedReceipts, partialFailures: failures, completedAt: Date())
         if report.succeeded {
@@ -196,7 +203,7 @@ actor V2MigrationCoordinator {
     }
 
     func quarantine(_ issue: MigrationRecoveryIssue, appVersion: String, build: String) throws {
-        let source = rootURL.appendingPathComponent(issue.sourceRelativePath)
+        let source = try validatedLegacySource(issue.sourceRelativePath)
         guard fileManager.fileExists(atPath: source.path) else { return }
         let safeName = issue.sourceRelativePath.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".json", with: "")
         let folder = rootURL.appendingPathComponent("V2/Backups/Quarantine/\(Int(Date().timeIntervalSince1970))-\(safeName)")
@@ -208,9 +215,20 @@ actor V2MigrationCoordinator {
     }
 
     func deleteSource(_ issue: MigrationRecoveryIssue) throws {
-        let source = rootURL.appendingPathComponent(issue.sourceRelativePath).standardizedFileURL
-        guard source.path.hasPrefix(rootURL.standardizedFileURL.path + "/"), fileManager.fileExists(atPath: source.path) else { return }
+        let source = try validatedLegacySource(issue.sourceRelativePath)
+        guard fileManager.fileExists(atPath: source.path) else { return }
         try fileManager.removeItem(at: source)
+    }
+
+    private func validatedLegacySource(_ relativePath: String) throws -> URL {
+        guard !relativePath.hasPrefix("/"), !relativePath.split(separator: "/").contains("..") else {
+            throw V2PersistenceError.migrationFailed("The recovery source path is unsafe.")
+        }
+        let allowed = relativePath == "receipts.json" || relativePath == "notes.json" || relativePath.hasPrefix("Receipts/") || relativePath.hasPrefix("Notes/")
+        guard allowed else { throw V2PersistenceError.migrationFailed("The recovery source is outside approved legacy storage.") }
+        let source = rootURL.appendingPathComponent(relativePath).standardizedFileURL
+        guard source.path.hasPrefix(rootURL.standardizedFileURL.path + "/") else { throw V2PersistenceError.migrationFailed("The recovery source path is unsafe.") }
+        return source
     }
 
     private func issue(kind: LegacyMigrationSourceKind, path: String, phase: MigrationPhase, error: Error) -> MigrationRecoveryIssue {
@@ -426,7 +444,12 @@ actor FileReceiptRepository: ReceiptRepository {
         var records = try loadRecords(); guard let index = records.firstIndex(where: { $0.id == receiptID }) else { throw ReceiptStorageError.metadataRead }
         records[index].merchantName = newName; records[index].updatedAt = Date(); try writeRecordsAtomically(records); return records[index]
     }
-    func loadImage(filename: String) async throws -> UIImage { guard let image = UIImage(contentsOfFile: (try validatedURL(filename: filename, in: imagesDir)).path) else { throw ReceiptStorageError.imageLoad }; return image }
+    func loadImage(filename: String) async throws -> UIImage {
+        let url = try validatedURL(filename: filename, in: imagesDir)
+        guard fileManager.fileExists(atPath: url.path) else { throw ReceiptStorageError.imageMissing }
+        guard let image = UIImage(contentsOfFile: url.path) else { throw ReceiptStorageError.imageCorrupt }
+        return image
+    }
     func loadThumbnail(filename: String) async throws -> UIImage { guard let image = UIImage(contentsOfFile: (try validatedURL(filename: filename, in: thumbsDir)).path) else { throw ReceiptStorageError.imageLoad }; return image }
 
     func imageURL(for record: ReceiptRecord, thumbnail: Bool = false) throws -> URL {

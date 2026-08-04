@@ -81,7 +81,7 @@ final class ReceiptToTipInputIntegrationTests: XCTestCase {
         XCTAssertEqual(input.currencyCode, "EUR")
         XCTAssertEqual(input.gratuityStatus, .yes)
         XCTAssertEqual(input.includedGratuityAmount, 18)
-        XCTAssertEqual(input.includedGratuityPercentage, 18)
+        XCTAssertNil(input.includedGratuityPercentage)
         XCTAssertEqual(input.includedGratuityEntryMode, .amount)
     }
 
