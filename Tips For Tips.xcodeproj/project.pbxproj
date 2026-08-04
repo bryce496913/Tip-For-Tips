@@ -10,6 +10,7 @@
 		EERS00012BE0000000123456 /* ReceiptScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EERS00022BE0000000123456 /* ReceiptScanner.swift */; };
 		EEV200012BD8000000123456 /* V2Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200022BD8000000123456 /* V2Models.swift */; };
 		EEV200032BD8000000123456 /* V2Repositories.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200042BD8000000123456 /* V2Repositories.swift */; };
+		EEV2000A2BD8000000123456 /* AppDataServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV2000A2BD8000000123457 /* AppDataServices.swift */; };
 		EEV200052BD8000000123456 /* V2CalculationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEV200062BD8000000123456 /* V2CalculationEngine.swift */; };
 		EEAA00022BD7AAAA00123456 /* TippingGuidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */; };
 		EEAA00012BD7AAAA00123456 /* HelpfulTipsContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */; };
@@ -62,6 +63,7 @@
 		EERS00022BE0000000123456 /* ReceiptScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptScanner.swift; sourceTree = "<group>"; };
 		EEV200022BD8000000123456 /* V2Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2Models.swift; sourceTree = "<group>"; };
 		EEV200042BD8000000123456 /* V2Repositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2Repositories.swift; sourceTree = "<group>"; };
+		EEV2000A2BD8000000123457 /* AppDataServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDataServices.swift; sourceTree = "<group>"; };
 		EEV200062BD8000000123456 /* V2CalculationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2CalculationEngine.swift; sourceTree = "<group>"; };
 		EEAA00002BD7AAAA00123456 /* HelpfulTipsContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpfulTipsContent.swift; sourceTree = "<group>"; };
 		EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TippingGuidance.swift; sourceTree = "<group>"; };
@@ -148,6 +150,7 @@
 				EEAA00032BD7AAAA00123456 /* TippingGuidance.swift */,
 				EEV200022BD8000000123456 /* V2Models.swift */,
 				EEV200042BD8000000123456 /* V2Repositories.swift */,
+				EEV2000A2BD8000000123457 /* AppDataServices.swift */,
 				EEV200062BD8000000123456 /* V2CalculationEngine.swift */,
 				EE648D6A2BC2F24600170654 /* Color.swift */,
 				EE648D662BC2EEF800170654 /* LaunchScreen.swift */,
@@ -265,6 +268,7 @@
 				EE648D6B2BC2F24600170654 /* Color.swift in Sources */,
 				EEV200012BD8000000123456 /* V2Models.swift in Sources */,
 				EEV200032BD8000000123456 /* V2Repositories.swift in Sources */,
+				EEV2000A2BD8000000123456 /* AppDataServices.swift in Sources */,
 				EEV200052BD8000000123456 /* V2CalculationEngine.swift in Sources */,
 				EE648D692BC2EF2500170654 /* MainMenu.swift in Sources */,
 			);
