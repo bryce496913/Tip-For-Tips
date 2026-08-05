@@ -271,6 +271,10 @@ struct DetectedReceiptCharge: Identifiable, Codable, Hashable {
     var userClassification: ReceiptChargeClassification? = nil
     var isIncludedInReceiptTotal: Bool? = nil
     var source: ReceiptChargeSource = .ocr
+
+    enum CodingKeys: String, CodingKey { case id, label, amount, percentage, kind, confidence, userClassification, isIncludedInReceiptTotal, source }
+    init(id: UUID = UUID(), label: String, amount: Decimal?, percentage: Decimal? = nil, kind: ReceiptChargeKind, confidence: Decimal, userClassification: ReceiptChargeClassification? = nil, isIncludedInReceiptTotal: Bool? = nil, source: ReceiptChargeSource = .ocr) { self.id = id; self.label = label; self.amount = amount; self.percentage = percentage; self.kind = kind; self.confidence = confidence; self.userClassification = userClassification; self.isIncludedInReceiptTotal = isIncludedInReceiptTotal; self.source = source }
+    init(from decoder: Decoder) throws { let container = try decoder.container(keyedBy: CodingKeys.self); id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(); label = try container.decode(String.self, forKey: .label); amount = try container.decodeIfPresent(Decimal.self, forKey: .amount); percentage = try container.decodeIfPresent(Decimal.self, forKey: .percentage); kind = try container.decode(ReceiptChargeKind.self, forKey: .kind); confidence = try container.decode(Decimal.self, forKey: .confidence); userClassification = try container.decodeIfPresent(ReceiptChargeClassification.self, forKey: .userClassification); isIncludedInReceiptTotal = try container.decodeIfPresent(Bool.self, forKey: .isIncludedInReceiptTotal); source = try container.decodeIfPresent(ReceiptChargeSource.self, forKey: .source) ?? .migrated }
 }
 
 enum ReceiptChargeSource: String, Codable, Hashable { case ocr, manual, migrated }
@@ -591,7 +595,7 @@ extension ReceiptRecord {
     /// never silently promoted to paid gratuity.
     func confirmedIncludedGratuity() -> IncludedGratuityResult {
         var total: Decimal = 0
-        for charge in detectedCharges where charge.userClassification == .includedGratuity {
+        for charge in detectedCharges where charge.userClassification == .includedGratuity && charge.isIncludedInReceiptTotal == true {
             if let amount = charge.amount { total += amount; continue }
             if let percentage = charge.percentage {
                 guard let subtotal else { return .needsSubtotal }
@@ -652,7 +656,7 @@ struct ReceiptFinancialReviewValidator: Sendable {
         var invalid: [UUID] = []
         var warnings: [ReceiptFinancialWarning] = []
         for charge in receipt.detectedCharges {
-            let relevant = [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge, .administrativeFee, .suggestedGratuity, .deliveryFee].contains(charge.kind) || charge.userClassification == .includedGratuity || charge.userClassification == .serviceChargeUnsure
+            let relevant = [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge, .administrativeFee, .suggestedGratuity, .deliveryFee, .unknownCharge].contains(charge.kind) || charge.source == .manual || charge.userClassification == .includedGratuity || charge.userClassification == .serviceChargeUnsure
             guard relevant else { continue }
             if receipt.financialReviewVersion == nil || charge.userClassification == nil || charge.userClassification == .unreviewed { unreviewed.append(charge.id); warnings.append(.unreviewedCharge(charge.id)) }
             if charge.userClassification == .includedGratuity {
