@@ -169,7 +169,7 @@ struct ReceiptDraft: Identifiable { let id: UUID; var sourceImage: UIImage?; var
         if d.subtotalText.isEmpty { d.subtotalText = detection.subtotalCandidates.first.map { "\($0.value)" } ?? "" }
         if d.taxText.isEmpty { d.taxText = detection.taxCandidates.first.map { "\($0.value)" } ?? "" }
         if d.totalText.isEmpty { d.totalText = detection.totalCandidates.first.map { "\($0.value)" } ?? "" }
-        if d.detectedCharges.isEmpty { d.detectedCharges = detection.chargeCandidates.map { ReceiptChargeDraft(id: $0.id, label: $0.label, amount: $0.amount, percentage: $0.percentage, kind: $0.kind, confidence: $0.confidence, userClassification: Self.initialClassification(for: $0.kind), source: .ocr) } }
+        if d.detectedCharges.isEmpty { d.detectedCharges = detection.chargeCandidates.map { ReceiptChargeDraft(id: $0.id, label: $0.label, amountText: $0.amount.map { "\($0)" } ?? "", percentageText: $0.percentage.map { "\($0)" } ?? "", amount: $0.amount, percentage: $0.percentage, kind: $0.kind, confidence: $0.confidence, userClassification: Self.initialClassification(for: $0.kind), source: .ocr) } }
         if d.recognizedText == nil { d.recognizedText = recognized.fullText }
         d.warnings = detection.warnings; draft = d; stage = .confirmation
     }

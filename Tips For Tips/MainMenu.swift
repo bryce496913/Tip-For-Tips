@@ -410,7 +410,7 @@ struct SettingsView: View {
     var body: some View { AppScreen { ScrollView { VStack(spacing: AppSpacing.section) { ScreenTitle(text: "Preferences", subtitle: "Choose your default currency, tipping preferences, and local data options."); defaultsCard; dataCard; privacyCard; aboutCard }.padding(AppSpacing.screen) } }.navigationTitle("Settings").navigationBarTitleDisplayMode(.inline).onReceive(appEnvironment.$preferences) { model.preferences = $0 }.sheet(item: $activeSheet) { sheet in NavigationStack { sheetContent(sheet) } } }
     private var defaultsCard: some View { ThemedCard { Text("Defaults").appFont(.title2); SettingsButtonRow(title: "Home currency", subtitle: "Used as your default conversion currency", value: "\(currencyName(model.preferences.homeCurrencyCode)) (\(model.preferences.homeCurrencyCode))") { activeSheet = .currency }; SettingsButtonRow(title: "Default tip", subtitle: "Suggested starting percentage", value: "\(model.preferences.defaultTipPercentage)%") { activeSheet = .tip }; SettingsButtonRow(title: "Tip basis", subtitle: "How new tip calculations start", value: model.preferences.tipCalculationBasis.title) { activeSheet = .basis }; SettingsButtonRow(title: "Default people", subtitle: "Used for new guided tips and splits", value: "\(model.preferences.defaultPeopleCount)") { activeSheet = .people }; Picker("Default rounding", selection: Binding(get: { model.preferences.roundingPreference }, set: { value in updateLive { $0.roundingPreference = value } })) { ForEach(RoundingPreference.allCases) { Text($0.title).tag($0) } }; Picker("Appearance", selection: Binding(get: { model.preferences.appearancePreference }, set: { value in updateLive { $0.appearancePreference = value } })) { ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) } }; Toggle(isOn: Binding(get: { model.preferences.showTippingExplanations }, set: { value in updateLive { $0.showTippingExplanations = value } })) { VStack(alignment: .leading, spacing: AppSpacing.xSmall) { Text("Show explanations").appFont(.body); Text("Hide optional guidance when off; warnings and validation remain visible.").appFont(.footnote).foregroundStyle(AppTheme.secondaryText) } }.tint(AppTheme.accent).accessibilityValue(model.preferences.showTippingExplanations ? "On" : "Off"); Button("Restart Onboarding") { updateLive { $0.hasCompletedOnboarding = false } }; if let status = model.statusMessage { Text(status).appFont(.footnote).foregroundStyle(AppTheme.secondaryText) } } }
 
-    private var dataCard: some View { ThemedCard { Text("Data Management").appFont(.title2); Button("Export App Data") { Task { do { let url = try await appEnvironment.dataService.createExport(includeRecoveryData: false); model.exportURL = url } catch { model.statusMessage = "Export failed. Try again or free up storage." } } }; NavigationLink("Data Management") { DataManagementView(service: appEnvironment.dataService) }; Button("Delete All Local Data", role: .destructive) { showDeleteAllConfirmation = true } }.sheet(item: $model.exportURL) { url in ShareSheet(items: [url]) }.confirmationDialog("Delete all local app data?", isPresented: $showDeleteAllConfirmation, titleVisibility: .visible) { Button("Delete All Local Data", role: .destructive) { Task { let report = await appEnvironment.dataService.deleteAllLocalData(includeRecoveryData: true); model.statusMessage = report.completedFully ? "All local app data was deleted." : "Some local data could not be deleted: \(report.failures.map(\.message).joined(separator: ", "))"; if report.completedFully { await appEnvironment.resetAfterDataDeletion() } } }; Button("Cancel", role: .cancel) {} } message: { Text("This removes receipts, images, calculations, splits, notes, preferences, caches, migration recovery data, and generated export packages from this device.") } }
+    private var dataCard: some View { ThemedCard { Text("Data Management").appFont(.title2); Button("Export App Data") { Task { do { let url = try await appEnvironment.dataService.createExport(includeRecoveryData: false); model.exportURL = url } catch { model.statusMessage = "Export failed. Try again or free up storage." } } }; NavigationLink("Data Management") { DataManagementView() }; Button("Delete All Local Data", role: .destructive) { showDeleteAllConfirmation = true } }.sheet(item: $model.exportURL) { url in ShareSheet(items: [url]) }.confirmationDialog("Delete all local app data?", isPresented: $showDeleteAllConfirmation, titleVisibility: .visible) { Button("Delete All Local Data", role: .destructive) { Task { let report = await appEnvironment.dataService.deleteAllLocalData(includeRecoveryData: true); model.statusMessage = report.completedFully ? "All local app data was deleted." : "Some local data could not be deleted: \(report.failures.map(\.message).joined(separator: ", "))"; if report.completedFully { await appEnvironment.resetAfterDataDeletion() } } }; Button("Cancel", role: .cancel) {} } message: { Text("This removes receipts, images, calculations, splits, notes, preferences, caches, migration recovery data, and generated export packages from this device.") } }
     @ViewBuilder private var privacyCard: some View { ThemedCard { Text("Privacy and local data").appFont(.title2); Text("Saved calculations, receipts, notes, and preferences are stored locally on this device. Receipt text recognition uses on-device Apple Vision when scanning is available.").appFont(.body); Link("Privacy Policy", destination: AppLinks.privacyPolicy); Link("Support and Feedback", destination: AppLinks.support) } }
     private var aboutCard: some View { ThemedCard { Text("About").appFont(.title2); ResultSummaryRow(label: "App", value: "Tips for Tips"); ResultSummaryRow(label: "Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1"); ResultSummaryRow(label: "Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1") } }
     @ViewBuilder private func sheetContent(_ sheet: SettingsSheet) -> some View { switch sheet { case .currency: CurrencySelectionView(selectedCode: model.preferences.homeCurrencyCode) { code in updateLive { $0.homeCurrencyCode = code }; activeSheet = nil }; case .tip: DefaultTipEditor(value: model.preferences.defaultTipPercentage) { tip in updateLive { $0.defaultTipPercentage = tip }; activeSheet = nil }; case .basis: TipBasisEditor(value: model.preferences.tipCalculationBasis) { basis in updateLive { $0.tipCalculationBasis = basis }; activeSheet = nil }; case .people: DefaultPeopleEditor(value: model.preferences.defaultPeopleCount) { count in updateLive { $0.defaultPeopleCount = count }; activeSheet = nil } } }
@@ -430,7 +430,7 @@ struct ShareSheet: UIViewControllerRepresentable { let items: [Any]; func makeUI
 extension URL: @retroactive Identifiable { public var id: String { absoluteString } }
 
 struct DataManagementView: View {
-    let service: any AppDataManaging
+    @EnvironmentObject private var appEnvironment: AppEnvironment
     @State private var summary: AppDataSummary?
     @State private var message: String?
     @State private var pendingDeletion: PendingDeletion?
@@ -453,21 +453,21 @@ struct DataManagementView: View {
                         LabeledContent("Quarantined sources", value: "\(s.quarantinedSourceCount)")
                     }
                     Section("Delete") {
-                        deleteButton("Delete Receipts and Images") { await service.deleteReceipts() }
-                        deleteButton("Delete Calculations and History") { await service.deleteCalculations() }
-                        deleteButton("Delete Saved Splits") { await service.deleteSplits() }
-                        deleteButton("Delete Notes") { await service.deleteNotes() }
-                        deleteButton("Clear Currency Cache") { await service.clearCurrencyCache() }
-                        deleteButton("Clear Favorite Currencies") { await service.clearCurrencyFavorites() }
-                        deleteButton("Clear Recent Currency Pairs") { await service.clearRecentCurrencyPairs() }
-                        deleteButton("Clear Guide Bookmarks and Recents") { await service.clearGuideData() }
-                        deleteButton("Reset Preferences") { await service.resetPreferences() }
-                        deleteButton("Reset Onboarding") { await service.resetOnboarding() }
-                        deleteButton("Delete Migration Markers") { await service.deleteMigrationMarkers() }
-                        deleteButton("Delete Migration Backups") { await service.deleteMigrationBackups() }
-                        deleteButton("Delete Quarantined Legacy Data") { await service.deleteQuarantinedLegacyData() }
-                        deleteButton("Delete Temporary Export and Recovery Files") { await service.deleteTemporaryAndRecoveryFiles() }
-                        deleteButton("Delete All Local Data") { await service.deleteAllLocalData(includeRecoveryData: true) }
+                        deleteButton("Delete Receipts and Images") { await appEnvironment.dataService.deleteReceipts() }
+                        deleteButton("Delete Calculations and History") { await appEnvironment.dataService.deleteCalculations() }
+                        deleteButton("Delete Saved Splits") { await appEnvironment.dataService.deleteSplits() }
+                        deleteButton("Delete Notes") { await appEnvironment.dataService.deleteNotes() }
+                        deleteButton("Clear Currency Cache") { await appEnvironment.dataService.clearCurrencyCache() }
+                        deleteButton("Clear Favorite Currencies") { await appEnvironment.dataService.clearCurrencyFavorites() }
+                        deleteButton("Clear Recent Currency Pairs") { await appEnvironment.dataService.clearRecentCurrencyPairs() }
+                        deleteButton("Clear Guide Bookmarks and Recents") { await appEnvironment.dataService.clearGuideData() }
+                        deleteButton("Reset Preferences", refreshEnvironmentOnSuccess: true) { await appEnvironment.dataService.resetPreferences() }
+                        deleteButton("Reset Onboarding", refreshEnvironmentOnSuccess: true) { await appEnvironment.dataService.resetOnboarding() }
+                        deleteButton("Delete Migration Markers") { await appEnvironment.dataService.deleteMigrationMarkers() }
+                        deleteButton("Delete Migration Backups") { await appEnvironment.dataService.deleteMigrationBackups() }
+                        deleteButton("Delete Quarantined Legacy Data") { await appEnvironment.dataService.deleteQuarantinedLegacyData() }
+                        deleteButton("Delete Temporary Export and Recovery Files") { await appEnvironment.dataService.deleteTemporaryAndRecoveryFiles() }
+                        deleteButton("Delete All Local Data", refreshEnvironmentOnSuccess: true) { await appEnvironment.dataService.deleteAllLocalData(includeRecoveryData: true) }
                     }
                 } else {
                     ProgressView("Loading data summary…")
@@ -476,20 +476,21 @@ struct DataManagementView: View {
             if let message { Text(message).foregroundStyle(AppTheme.secondaryText).padding() }
         }
         .navigationTitle("Data Management")
-        .task { summary = try? await service.loadSummary() }
+        .task { summary = try? await appEnvironment.dataService.loadSummary() }
         .confirmationDialog(pendingDeletion?.title ?? "Delete data?", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) { Button(pendingDeletion?.title ?? "Delete", role: .destructive) { if let pendingDeletion { Task { await runDeletion(pendingDeletion) } }; pendingDeletion = nil }; Button("Cancel", role: .cancel) { pendingDeletion = nil } } message: { Text("This action cannot be undone.") }
     }
-    private func deleteButton(_ title: String, action: @escaping () async -> DataDeletionReport) -> some View {
-        Button(title, role: .destructive) { pendingDeletion = PendingDeletion(title: title, action: action) }
+    private func deleteButton(_ title: String, refreshEnvironmentOnSuccess: Bool = false, action: @escaping () async -> DataDeletionReport) -> some View {
+        Button(title, role: .destructive) { pendingDeletion = PendingDeletion(title: title, refreshEnvironmentOnSuccess: refreshEnvironmentOnSuccess, action: action) }
     }
     private func runDeletion(_ deletion: PendingDeletion) async {
         let r = await deletion.action()
         message = r.completedFully ? "Completed: \(deletion.title)" : "Partial failure: \(r.failures.map(\.message).joined(separator: ", "))"
-        summary = try? await service.loadSummary()
+        if r.completedFully, deletion.refreshEnvironmentOnSuccess { await appEnvironment.resetAfterDataDeletion() }
+        summary = try? await appEnvironment.dataService.loadSummary()
     }
 }
 
-private struct PendingDeletion: Identifiable { let id = UUID(); let title: String; let action: () async -> DataDeletionReport }
+private struct PendingDeletion: Identifiable { let id = UUID(); let title: String; let refreshEnvironmentOnSuccess: Bool; let action: () async -> DataDeletionReport }
 
 func currencyName(_ code: String) -> String { Locale.current.localizedString(forCurrencyCode: code) ?? code }
 
