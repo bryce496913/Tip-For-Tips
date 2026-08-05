@@ -72,7 +72,7 @@ final class Phase5CoreTests: XCTestCase {
 
 final class ReceiptToTipInputIntegrationTests: XCTestCase {
     func testReceiptPrefillRetainsTaxCurrencyAndIncludedGratuity() {
-        let charge = DetectedReceiptCharge(label: "Automatic gratuity", amount: 18, percentage: 18, kind: .automaticGratuity, confidence: 0.9, userClassification: .includedGratuity)
+        let charge = DetectedReceiptCharge(label: "Automatic gratuity", amount: 18, percentage: 18, kind: .automaticGratuity, confidence: 0.9, userClassification: .includedGratuity, isIncludedInReceiptTotal: true)
         let receipt = ReceiptRecord(id: UUID(), merchantName: "Dinner", receiptDate: Date(), currencyCode: "EUR", subtotal: 100, tax: 8, total: 126, detectedCharges: [charge], imageFilename: "receipt.jpg", thumbnailFilename: "receipt-thumb.jpg", notes: "", createdAt: Date(), updatedAt: Date())
         let input = receipt.tipCalculationInput()
         XCTAssertEqual(input.subtotal, 100)

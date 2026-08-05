@@ -616,7 +616,7 @@ extension ReceiptRecord {
         input.finalTotal = total
         input.currencyCode = currencyCode.isEmpty ? preferences.homeCurrencyCode : currencyCode
         input.calculationBasis = subtotal == nil ? .finalTotalAfterTax : preferences.tipCalculationBasis
-        let confirmedCharges = detectedCharges.filter { $0.userClassification == .includedGratuity }
+        let confirmedCharges = detectedCharges.filter { $0.userClassification == .includedGratuity && $0.isIncludedInReceiptTotal == true }
         let unsure = detectedCharges.contains { charge in
             charge.userClassification == .serviceChargeUnsure || charge.userClassification == .otherOrUnclear || charge.kind == .serviceCharge || charge.kind == .hospitalityCharge || charge.kind == .administrativeFee
         }
