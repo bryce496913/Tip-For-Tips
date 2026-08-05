@@ -167,8 +167,8 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
 final class IncludedGratuityPercentageReleaseTests: XCTestCase {
     func testEveryWorkflowAggregatesAllConfirmedCharges() {
         let charges = [
-            DetectedReceiptCharge(label: "Automatic gratuity", amount: 10, percentage: nil, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity),
-            DetectedReceiptCharge(label: "Included gratuity 5%", amount: nil, percentage: 5, kind: .includedGratuity, confidence: 1, userClassification: .includedGratuity),
+            DetectedReceiptCharge(label: "Automatic gratuity", amount: 10, percentage: nil, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: true),
+            DetectedReceiptCharge(label: "Included gratuity 5%", amount: nil, percentage: 5, kind: .includedGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: true),
             DetectedReceiptCharge(label: "Suggested tip", amount: 99, percentage: nil, kind: .suggestedGratuity, confidence: 1, userClassification: .suggestedGratuityOnly)
         ]
         let receipt = ReceiptRecord(id: UUID(), merchantName: "Fixture", receiptDate: nil, subtotal: 100, tax: 8, total: 123, detectedCharges: charges, imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(), updatedAt: Date())
@@ -178,8 +178,18 @@ final class IncludedGratuityPercentageReleaseTests: XCTestCase {
         XCTAssertEqual(receipt.convertibleAmounts.first(where: { $0.id == "included-gratuity" })?.amount, 15)
     }
 
+
+    func testConfirmedGratuityWithoutIncludedTotalFlagIsNotCounted() {
+        let charge = DetectedReceiptCharge(label: "Automatic gratuity", amount: 10, percentage: nil, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: nil)
+        let receipt = ReceiptRecord(id: UUID(), merchantName: "Fixture", receiptDate: nil, subtotal: 100, tax: 8, total: 118, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(), updatedAt: Date())
+        XCTAssertEqual(receipt.confirmedIncludedGratuity(), .amount(0))
+        XCTAssertEqual(receipt.tipCalculationInput().gratuityStatus, .no)
+        XCTAssertNil(receipt.tipCalculationInput().includedGratuityAmount)
+        XCTAssertNil(SplitCalculatorContext.receipt(receipt).includedGratuityAmount)
+    }
+
     func testPercentageWithoutSubtotalRequiresReviewEverywhere() {
-        let charge = DetectedReceiptCharge(label: "Included gratuity 18%", amount: nil, percentage: 18, kind: .includedGratuity, confidence: 1, userClassification: .includedGratuity)
+        let charge = DetectedReceiptCharge(label: "Included gratuity 18%", amount: nil, percentage: 18, kind: .includedGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: true)
         let receipt = ReceiptRecord(id: UUID(), merchantName: nil, receiptDate: nil, subtotal: nil, tax: nil, total: 118, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(), updatedAt: Date())
         XCTAssertEqual(receipt.confirmedIncludedGratuity(), .needsSubtotal)
         XCTAssertEqual(receipt.tipCalculationInput().includedGratuityEntryMode, .unknown)
@@ -188,7 +198,7 @@ final class IncludedGratuityPercentageReleaseTests: XCTestCase {
     }
     @MainActor
     func testPercentageOnlyReceiptCarriesTwentyDollarsIntoSplitAndReconciles() throws {
-        let charge = DetectedReceiptCharge(label: "Included gratuity: 20%", amount: nil, percentage: 20, kind: .includedGratuity, confidence: 1, userClassification: .includedGratuity)
+        let charge = DetectedReceiptCharge(label: "Included gratuity: 20%", amount: nil, percentage: 20, kind: .includedGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: true)
         let receipt = ReceiptRecord(id: UUID(), merchantName: "Fixture", receiptDate: nil, subtotal: 100, tax: 8, total: 128, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(), updatedAt: Date())
         let context = SplitCalculatorContext.receipt(receipt)
         let model = SplitBillViewModel(context: context)
@@ -244,7 +254,7 @@ final class IncludedGratuityPercentageReleaseTests: XCTestCase {
 
     func testReceiptConversionExcludesUnconfirmedCharges() {
         let charges = [
-            DetectedReceiptCharge(label: "Gratuity", amount: 18, percentage: nil, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity),
+            DetectedReceiptCharge(label: "Gratuity", amount: 18, percentage: nil, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: true),
             DetectedReceiptCharge(label: "Delivery", amount: 5, percentage: nil, kind: .deliveryFee, confidence: 1, userClassification: .deliveryFee),
             DetectedReceiptCharge(label: "Service", amount: 4, percentage: nil, kind: .serviceCharge, confidence: 1, userClassification: .serviceChargeUnsure)
         ]
@@ -254,7 +264,7 @@ final class IncludedGratuityPercentageReleaseTests: XCTestCase {
     }
 
     func testPercentageOnlyReceiptGratuityIsConvertible() {
-        let charge = DetectedReceiptCharge(label: "Gratuity 18%", amount: nil, percentage: 18, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity)
+        let charge = DetectedReceiptCharge(label: "Gratuity 18%", amount: nil, percentage: 18, kind: .automaticGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: true)
         let receipt = ReceiptRecord(id: UUID(), merchantName: nil, receiptDate: nil, subtotal: 100, tax: 8, total: 126, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(), updatedAt: Date())
         XCTAssertEqual(receipt.convertibleAmounts.first { $0.id == "included-gratuity" }?.amount, 18)
     }

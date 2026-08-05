@@ -23,7 +23,7 @@ final class AppEnvironment: ObservableObject {
         isLoaded = false; startupError = nil
         let report = await migrationCoordinator.migrateIfNeeded()
         guard report.succeeded else { migrationRecoveryIssues = await migrationCoordinator.recoveryIssues; startupError = report.partialFailures.joined(separator: "\n"); return }
-        do { preferences = (try await preferencesRepository.loadPreferences()).validated; migrationRecoveryIssues = []; isLoaded = true }
+        do { preferences = (try await preferencesRepository.loadPreferences()).validated; if ProcessInfo.processInfo.arguments.contains("-ui-testing") { preferences.hasCompletedOnboarding = true }; migrationRecoveryIssues = []; isLoaded = true }
         catch { startupError = error.localizedDescription }
     }
     func updatePreferences(_ mutation: (inout UserPreferences) -> Void) async throws { var updated = preferences; mutation(&updated); updated = updated.validated; try await preferencesRepository.savePreferences(updated); preferences = updated }

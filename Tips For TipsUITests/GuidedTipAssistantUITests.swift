@@ -3,6 +3,7 @@ import XCTest
 final class GuidedTipAssistantUITests: XCTestCase {
     func testOpenFromDashboardAndStartRestaurantFlow() {
         let app = XCUIApplication()
+        app.launchArguments += ["-ui-testing"]
         app.launch()
         XCTAssertTrue(app.buttons["Calculate a Tip"].waitForExistence(timeout: 5))
         app.buttons["Calculate a Tip"].tap()
@@ -11,6 +12,7 @@ final class GuidedTipAssistantUITests: XCTestCase {
 
     func testServiceSearchPeopleAndStartOverControlsExist() {
         let app = XCUIApplication()
+        app.launchArguments += ["-ui-testing"]
         app.launch()
         app.buttons["Calculate a Tip"].tap()
         XCTAssertTrue(app.textFields["Search services"].waitForExistence(timeout: 5))
@@ -26,6 +28,7 @@ final class ModernizedUXUITests: XCTestCase {
         if let contentSize {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
         }
+        app.launchArguments += ["-ui-testing"]
         app.launch()
         return app
     }
