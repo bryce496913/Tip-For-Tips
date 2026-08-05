@@ -347,7 +347,13 @@ actor V2MigrationCoordinator {
                 let text = try String(contentsOf: file, encoding: .utf8)
                 let values = try file.resourceValues(forKeys: [.contentModificationDateKey])
                 let created = formatter.date(from: file.deletingPathExtension().lastPathComponent) ?? values.contentModificationDate ?? Date()
-                let note = SavedNote(id: UUID(), text: text, createdAt: created, updatedAt: values.contentModificationDate ?? created)
+                let noteID = deterministicLegacyNoteID(name: relative)
+                if notes.contains(where: { $0.id == noteID }) {
+                    let legacy = rootURL.appendingPathComponent("Notes/Legacy", isDirectory: true); try fileManager.createDirectory(at: legacy, withIntermediateDirectories: true)
+                    if !fileManager.fileExists(atPath: legacy.appendingPathComponent(relative).path) { try fileManager.moveItem(at: file, to: legacy.appendingPathComponent(relative)) }
+                    results.append(.init(sourceRelativePath: relative, migratedNoteID: noteID, warning: nil, failure: nil)); continue
+                }
+                let note = SavedNote(id: noteID, text: text, createdAt: created, updatedAt: values.contentModificationDate ?? created)
                 var updated = notes; updated.append(note)
                 try fileManager.createDirectory(at: notesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
@@ -358,6 +364,15 @@ actor V2MigrationCoordinator {
             } catch { results.append(.init(sourceRelativePath: relative, migratedNoteID: nil, warning: nil, failure: error.localizedDescription)) }
         }
         return results
+    }
+
+    private func deterministicLegacyNoteID(name: String) -> UUID {
+        let bytes = Array("tips-for-tips-v1-note|\(name)".utf8)
+        var a: UInt64 = 0xcbf29ce484222325, b: UInt64 = 0x84222325cbf29ce4
+        for byte in bytes { a = (a ^ UInt64(byte)) &* 0x100000001b3; b = (b ^ UInt64(byte &+ 17)) &* 0x100000001b3 }
+        var raw = withUnsafeBytes(of: a.bigEndian, Array.init) + withUnsafeBytes(of: b.bigEndian, Array.init)
+        raw[6] = (raw[6] & 0x0f) | 0x50; raw[8] = (raw[8] & 0x3f) | 0x80
+        return UUID(uuid: (raw[0],raw[1],raw[2],raw[3],raw[4],raw[5],raw[6],raw[7],raw[8],raw[9],raw[10],raw[11],raw[12],raw[13],raw[14],raw[15]))
     }
 
     private func copyLegacyImage(named filename: String, from sourceDirectory: URL, to destinationDirectory: URL) throws -> String? {
