@@ -6,7 +6,7 @@ protocol AppDataManaging: Sendable { func loadSummary() async throws -> AppDataS
 
 enum DataCategory: String, Codable, Sendable { case receipts, calculations, splits, notes, currencyCache, currencyFavorites, recentCurrencyPairs, guideData, preferences, onboarding, migrationMarkers, migrationBackups, quarantine, temporaryAndRecoveryFiles }
 struct DataDeletionFailure: Codable, Sendable, Hashable { var category: DataCategory; var message: String }
-struct DataDeletionReport: Codable, Sendable { var deletedCategories: [DataCategory]; var failures: [DataDeletionFailure]; var completedFully: Bool { failures.isEmpty } }
+struct DataDeletionReport: Codable, Sendable { var deletedCategories: [DataCategory]; var failures: [DataDeletionFailure]; var completedFully: Bool { failures.isEmpty }; var requiresEnvironmentRefresh: Bool { deletedCategories.contains(.preferences) || deletedCategories.contains(.onboarding) } }
 struct AppDataSummary: Codable, Sendable { var receiptCount: Int; var calculationCount: Int; var splitCount: Int; var noteCount: Int; var guideBookmarkCount: Int; var favoriteCurrencyCount: Int; var recentCurrencyPairCount: Int; var cachedExchangeRateCount: Int; var receiptImageStorage: Int64; var totalAppDataStorage: Int64; var migrationBackupStorage: Int64; var quarantinedSourceCount: Int }
 struct AppDataExportManifest: Codable, Sendable { var exportSchemaVersion: Int; var appVersion: String; var buildNumber: String; var exportDate: Date; var includedDataCategories: [String]; var recordCounts: [String:Int]; var missingOptionalImageFiles: [String]; var recoveryDataIncluded: Bool; var exportWarnings: [String] }
 
@@ -47,7 +47,10 @@ actor FileAppDataService: AppDataExporting, AppDataManaging {
             let report = remove(rel, .receipts)
             failures.append(contentsOf: report.failures)
         }
-        if failures.isEmpty { _ = remove("V2/migration-v2-complete.json", .migrationMarkers) }
+        if failures.isEmpty {
+            let markerReport = remove("V2/migration-v2-complete.json", .migrationMarkers)
+            failures.append(contentsOf: markerReport.failures)
+        }
         return DataDeletionReport(deletedCategories: failures.isEmpty ? [.receipts] : [], failures: failures)
     }
     func deleteCalculations() async -> DataDeletionReport { do { for c in (try await calculations.fetchCalculations()).filter({$0.tipResult != nil}) { try await calculations.deleteCalculation(id: c.id) }; return ok(.calculations) } catch { return fail(.calculations, error) } }
