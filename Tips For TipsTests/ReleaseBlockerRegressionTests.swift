@@ -1,6 +1,15 @@
 import XCTest
 @testable import Tips_For_Tips
 
+private final class FailingMarkerRemovalFileManager: FileManager, @unchecked Sendable {
+    override func removeItem(at URL: URL) throws {
+        if URL.lastPathComponent == "migration-v2-complete.json" {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try super.removeItem(at: URL)
+    }
+}
+
 final class ReleaseBlockerRegressionTests: XCTestCase {
     func testReleaseLinksAreSecureAndNotPlaceholders() {
         for url in [AppLinks.privacyPolicy, AppLinks.support] {
@@ -140,6 +149,39 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
         let backups = root.appendingPathComponent("V2/Receipts/Backups")
         XCTAssertTrue((try FileManager.default.contentsOfDirectory(atPath: backups.path)).contains { $0.contains("receipts-corrupt") })
         XCTAssertEqual(String(data: try Data(contentsOf: metadata), encoding: .utf8), "not json")
+    }
+
+
+    func testDeleteReceiptsReportsMigrationMarkerDeletionFailure() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let v2 = root.appendingPathComponent("V2", isDirectory: true)
+        try fm.createDirectory(at: v2, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: v2.appendingPathComponent("migration-v2-complete.json"))
+        defer { try? fm.removeItem(at: root) }
+        let service = FileAppDataService(
+            rootURL: root,
+            fileManager: FailingMarkerRemovalFileManager(),
+            receiptRepository: FileReceiptRepository(rootURL: root),
+            calculationRepository: FileCalculationRepository(rootURL: root),
+            preferencesRepository: FileUserPreferencesRepository(rootURL: root)
+        )
+
+        let report = await service.deleteReceipts()
+
+        XCTAssertFalse(report.completedFully)
+        XCTAssertEqual(report.failures.map(\.category), [.migrationMarkers])
+        XCTAssertTrue(fm.fileExists(atPath: v2.appendingPathComponent("migration-v2-complete.json").path))
+    }
+
+    func testDeletionReportRequiresEnvironmentRefreshForPartialPreferenceDeletion() {
+        let report = DataDeletionReport(
+            deletedCategories: [.preferences],
+            failures: [.init(category: .receipts, message: "Receipt deletion failed")]
+        )
+
+        XCTAssertFalse(report.completedFully)
+        XCTAssertTrue(report.requiresEnvironmentRefresh)
     }
 
     func testPartialMigrationDoesNotWriteCompletionMarker() async throws {
