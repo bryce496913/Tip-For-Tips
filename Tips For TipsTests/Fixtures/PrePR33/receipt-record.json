@@ -1,0 +1,24 @@
+{
+  "id": "8B26D588-1581-4DF0-A899-4D52F4E24910",
+  "merchantName": "Harbor House",
+  "receiptDate": "2025-02-14T19:30:00Z",
+  "currencyCode": "USD",
+  "subtotal": 84.50,
+  "tax": 7.18,
+  "total": 109.68,
+  "detectedCharges": [{
+    "id": "97A264E9-840E-498A-A4A2-3946DDF0B1B0",
+    "label": "Automatic Gratuity 18%",
+    "amount": 18.00,
+    "percentage": 18,
+    "kind": "automaticGratuity",
+    "confidence": 0.96
+  }],
+  "imageFilename": "8B26D588-1581-4DF0-A899-4D52F4E24910.jpg",
+  "thumbnailFilename": "8B26D588-1581-4DF0-A899-4D52F4E24910-thumb.jpg",
+  "recognizedText": "HARBOR HOUSE\nSubtotal 84.50\nTax 7.18\nAutomatic Gratuity 18.00\nTotal 109.68",
+  "notes": "Birthday dinner",
+  "confirmationStatus": "imported",
+  "createdAt": "2025-02-14T19:35:00Z",
+  "updatedAt": "2025-02-14T19:36:00Z"
+}

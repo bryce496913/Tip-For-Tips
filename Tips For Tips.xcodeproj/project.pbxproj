@@ -30,6 +30,7 @@
 		EE648D772BC2F36100170654 /* HelpfulTips.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE648D762BC2F36100170654 /* HelpfulTips.swift */; };
 		EE94B0D22BD2E3DA00538D5A /* CurrencyConverterViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE94B0D12BD2E3DA00538D5A /* CurrencyConverterViewModel.swift */; };
 
+		A10000000000000000000030 /* ReleaseCriticalWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* ReleaseCriticalWorkflowTests.swift */; };
 		A10000000000000000000001 /* ReleaseBlockerRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* ReleaseBlockerRegressionTests.swift */; };
 		A10000000000000000000002 /* UXRepairTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* UXRepairTests.swift */; };
 		A10000000000000000000003 /* SplitCalculationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000F /* SplitCalculationEngineTests.swift */; };
@@ -86,6 +87,7 @@
 
 		A1000000000000000000000B /* Tips For TipsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Tips For TipsTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000000000000000000000C /* Tips For TipsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Tips For TipsUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000031 /* ReleaseCriticalWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseCriticalWorkflowTests.swift; sourceTree = "<group>"; };
 		A1000000000000000000000D /* ReleaseBlockerRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseBlockerRegressionTests.swift; sourceTree = "<group>"; };
 		A1000000000000000000000E /* UXRepairTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UXRepairTests.swift; sourceTree = "<group>"; };
 		A1000000000000000000000F /* SplitCalculationEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitCalculationEngineTests.swift; sourceTree = "<group>"; };
@@ -170,7 +172,7 @@
 			sourceTree = "<group>";
 		};
 
-		A10000000000000000000017 /* Tips For TipsTests */ = {isa = PBXGroup; children = (A1000000000000000000000D /* ReleaseBlockerRegressionTests.swift */, A1000000000000000000000E /* UXRepairTests.swift */, A1000000000000000000000F /* SplitCalculationEngineTests.swift */, A10000000000000000000010 /* ReceiptFieldParserTests.swift */, A10000000000000000000011 /* TipRecommendationEngineTests.swift */, A10000000000000000000014 /* Fixtures */, ); path = "Tips For TipsTests"; sourceTree = "<group>"; };
+		A10000000000000000000017 /* Tips For TipsTests */ = {isa = PBXGroup; children = (A10000000000000000000031 /* ReleaseCriticalWorkflowTests.swift */, A1000000000000000000000D /* ReleaseBlockerRegressionTests.swift */, A1000000000000000000000E /* UXRepairTests.swift */, A1000000000000000000000F /* SplitCalculationEngineTests.swift */, A10000000000000000000010 /* ReceiptFieldParserTests.swift */, A10000000000000000000011 /* TipRecommendationEngineTests.swift */, A10000000000000000000014 /* Fixtures */, ); path = "Tips For TipsTests"; sourceTree = "<group>"; };
 		A10000000000000000000018 /* Tips For TipsUITests */ = {isa = PBXGroup; children = (A10000000000000000000012 /* UXRepairUITests.swift */, A10000000000000000000013 /* GuidedTipAssistantUITests.swift */, ); path = "Tips For TipsUITests"; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -275,7 +277,7 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 
-		A1000000000000000000001D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* ReleaseBlockerRegressionTests.swift in Sources */, A10000000000000000000002 /* UXRepairTests.swift in Sources */, A10000000000000000000003 /* SplitCalculationEngineTests.swift in Sources */, A10000000000000000000004 /* ReceiptFieldParserTests.swift in Sources */, A10000000000000000000005 /* TipRecommendationEngineTests.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A1000000000000000000001D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000030 /* ReleaseCriticalWorkflowTests.swift in Sources */, A10000000000000000000001 /* ReleaseBlockerRegressionTests.swift in Sources */, A10000000000000000000002 /* UXRepairTests.swift in Sources */, A10000000000000000000003 /* SplitCalculationEngineTests.swift in Sources */, A10000000000000000000004 /* ReceiptFieldParserTests.swift in Sources */, A10000000000000000000005 /* TipRecommendationEngineTests.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		A1000000000000000000001E /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000006 /* UXRepairUITests.swift in Sources */, A10000000000000000000007 /* GuidedTipAssistantUITests.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
