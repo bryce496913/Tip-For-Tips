@@ -58,6 +58,41 @@ jobs:
             -resultBundlePath TestResults.xcresult \
             2>&1 | tee xcodebuild.log
 
+      - name: Verify Release build
+        run: |
+          xcodebuild build \
+            -project "Tips For Tips.xcodeproj" \
+            -scheme "Tips For Tips" \
+            -configuration Release \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Archive and verify iPhone-only device family
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/TipsForTips.xcarchive
+          xcodebuild archive \
+            -project "Tips For Tips.xcodeproj" \
+            -scheme "Tips For Tips" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/TipsForTips.xcarchive \
+            CODE_SIGNING_ALLOWED=NO
+
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+
+          info_plist = Path("build/TipsForTips.xcarchive/Products/Applications/Tips For Tips.app/Info.plist")
+          with info_plist.open("rb") as plist_file:
+              device_family = plistlib.load(plist_file).get("UIDeviceFamily")
+
+          if device_family != [1]:
+              raise SystemExit(f"Expected iPhone-only UIDeviceFamily [1], found {device_family!r}")
+          print(f"Verified archive UIDeviceFamily: {device_family}")
+          PY
+
       - name: Upload test diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -68,3 +103,4 @@ jobs:
           path: |
             TestResults.xcresult
             xcodebuild.log
+            build/TipsForTips.xcarchive
