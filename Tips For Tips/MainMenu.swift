@@ -395,8 +395,8 @@ final class SettingsViewModel: ObservableObject {
 }
 
 enum AppLinks {
-    static let privacyPolicy = URL(string: "https://brycecamerondesign.com/tips-for-tips/privacy")!
-    static let support = URL(string: "https://brycecamerondesign.com/tips-for-tips/support")!
+    static let privacyPolicy = URL(string: "https://sites.google.com/view/tipfortips/privacy-policy")!
+    static let support = URL(string: "https://sites.google.com/view/tipfortips/home")!
 }
 
 enum SettingsSheet: Identifiable { case currency, tip, basis, people; var id: String { "\(self)" } }

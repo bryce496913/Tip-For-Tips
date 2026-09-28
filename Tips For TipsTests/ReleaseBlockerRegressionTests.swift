@@ -11,12 +11,16 @@ private final class FailingMarkerRemovalFileManager: FileManager, @unchecked Sen
 }
 
 final class ReleaseBlockerRegressionTests: XCTestCase {
-    func testReleaseLinksAreSecureAndNotPlaceholders() {
-        for url in [AppLinks.privacyPolicy, AppLinks.support] {
+    func testReleaseLinksMatchProductionURLsAndAreSecure() {
+        let expectedURLs = [
+            AppLinks.privacyPolicy: "https://sites.google.com/view/tipfortips/privacy-policy",
+            AppLinks.support: "https://sites.google.com/view/tipfortips/home"
+        ]
+
+        for (url, expectedValue) in expectedURLs {
             XCTAssertEqual(url.scheme, "https")
             XCTAssertNotNil(url.host)
-            XCTAssertFalse(url.absoluteString.lowercased().contains("example"))
-            XCTAssertFalse(url.absoluteString.lowercased().contains("placeholder"))
+            XCTAssertEqual(url.absoluteString, expectedValue)
         }
     }
 
