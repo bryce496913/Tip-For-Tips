@@ -470,6 +470,104 @@ final class ScannerEnvironmentRegressionTests: XCTestCase {
         model.draft?.notes = "Changed"
         XCTAssertTrue(model.hasUnsavedChanges)
     }
+
+    @MainActor func testImageAttemptReturnsToSourceOnlyWithoutDraft() {
+        let model = ReceiptScannerViewModel(calculationRepository: IdentityCalculationRepository())
+        model.cameraCancelled()
+        XCTAssertEqual(model.stage, .sourceSelection)
+
+        model.startManualEntry()
+        let id = model.draft?.id
+        model.cameraCancelled()
+        XCTAssertEqual(model.stage, .confirmation)
+        XCTAssertEqual(model.draft?.id, id)
+    }
+
+    @MainActor func testPhotoCancellationAndLoadFailurePreserveCompleteDraft() {
+        let model = ReceiptScannerViewModel(calculationRepository: IdentityCalculationRepository())
+        model.startManualEntry()
+        let id = model.draft!.id
+        model.draft?.merchantName = "Corner Cafe"
+        model.draft?.subtotalText = "12.00"
+        model.draft?.taxText = "1.00"
+        model.draft?.totalText = "15.00"
+        model.draft?.notes = "Window seat"
+        model.draft?.detectedCharges = [.init(id: UUID(), label: "Service", amountText: "2.00", kind: .serviceCharge, confidence: 1, userClassification: .otherOrUnclear)]
+
+        model.photoSelectionChanged(nil)
+        XCTAssertEqual(model.stage, .confirmation)
+        model.imageLoadingFailed()
+        XCTAssertEqual(model.stage, .confirmation)
+        XCTAssertEqual(model.draft?.id, id)
+        XCTAssertEqual(model.draft?.merchantName, "Corner Cafe")
+        XCTAssertEqual(model.draft?.subtotalText, "12.00")
+        XCTAssertEqual(model.draft?.taxText, "1.00")
+        XCTAssertEqual(model.draft?.totalText, "15.00")
+        XCTAssertEqual(model.draft?.detectedCharges.first?.label, "Service")
+        XCTAssertEqual(model.draft?.notes, "Window seat")
+    }
+
+    @MainActor func testManualEntryReopensRatherThanReplacingExistingDraft() {
+        let model = ReceiptScannerViewModel(calculationRepository: IdentityCalculationRepository())
+        model.startManualEntry()
+        model.draft?.merchantName = "Preserved"
+        let id = model.draft!.id
+        model.startManualEntry()
+        XCTAssertEqual(model.draft?.id, id)
+        XCTAssertEqual(model.draft?.merchantName, "Preserved")
+    }
+
+    @MainActor func testExistingImageLoadsWithoutDirtyingEditAndReplacementDoes() async throws {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 8, height: 8)) }
+        let receipt = scannerTestReceipt(imageFilename: "saved.jpg")
+        let repository = ScannerReceiptRepository(receipt: receipt, imageResult: .success(image))
+        let model = ReceiptScannerViewModel(context: .editReceipt(receipt.id), repository: repository, calculationRepository: IdentityCalculationRepository())
+
+        await model.loadExistingReceiptIfNeeded()
+        XCTAssertEqual(model.imageState, .existingLoaded)
+        XCTAssertNotNil(model.draft?.sourceImage)
+        XCTAssertNil(model.draft?.processed)
+        XCTAssertNil(model.draft?.imageRevision)
+        XCTAssertFalse(model.hasUnsavedChanges)
+
+        model.process(image)
+        for _ in 0..<100 where model.imageState != .replacementSelected { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(model.imageState, .replacementSelected)
+        XCTAssertTrue(model.hasUnsavedChanges)
+    }
+
+    @MainActor func testMissingAndCorruptExistingImagesStayDistinctAndPreserveMetadata() async {
+        for (error, expected): (ReceiptStorageError, ReceiptDraftImageState) in [(.imageMissing, .existingMissing), (.imageCorrupt, .existingCorrupt)] {
+            let receipt = scannerTestReceipt(imageFilename: "saved.jpg")
+            let repository = ScannerReceiptRepository(receipt: receipt, imageResult: .failure(error))
+            let model = ReceiptScannerViewModel(context: .editReceipt(receipt.id), repository: repository, calculationRepository: IdentityCalculationRepository())
+            await model.loadExistingReceiptIfNeeded()
+            XCTAssertEqual(model.imageState, expected)
+            XCTAssertEqual(model.draft?.merchantName, receipt.merchantName)
+            XCTAssertEqual(model.draft?.notes, receipt.notes)
+            XCTAssertFalse(model.hasUnsavedChanges)
+        }
+    }
+}
+
+private func scannerTestReceipt(imageFilename: String?) -> ReceiptRecord {
+    ReceiptRecord(id: UUID(), merchantName: "Saved Cafe", receiptDate: Date(timeIntervalSince1970: 1_700_000_000), currencyCode: "USD", subtotal: 10, tax: 1, total: 13, detectedCharges: [], imageFilename: imageFilename, thumbnailFilename: nil, notes: "Saved note", createdAt: Date(timeIntervalSince1970: 1_700_000_000), updatedAt: Date(timeIntervalSince1970: 1_700_000_000))
+}
+
+private final class ScannerReceiptRepository: ReceiptRepository, @unchecked Sendable {
+    let receiptValue: ReceiptRecord
+    let imageResult: Result<UIImage, Error>
+    init(receipt: ReceiptRecord, imageResult: Result<UIImage, Error>) { receiptValue = receipt; self.imageResult = imageResult }
+    func fetchReceipts() async throws -> [ReceiptRecord] { [receiptValue] }
+    func receipt(id: UUID) async throws -> ReceiptRecord? { id == receiptValue.id ? receiptValue : nil }
+    func create(draft: ReceiptRecord, fullImage: UIImage, thumbnail: UIImage) async throws -> ReceiptRecord { draft }
+    func createMetadataOnly(draft: ReceiptRecord) async throws {}
+    func saveReceipt(_ receipt: ReceiptRecord) async throws {}
+    func replaceImage(receiptID: UUID, image: UIImage) async throws -> ReceiptRecord { receiptValue }
+    func rename(receiptID: UUID, newName: String) async throws -> ReceiptRecord { receiptValue }
+    func deleteReceipt(id: UUID) async throws {}
+    func loadImage(filename: String) async throws -> UIImage { try imageResult.get() }
+    func loadThumbnail(filename: String) async throws -> UIImage { try imageResult.get() }
 }
 
 final class MigrationRecoveryRegressionTests: XCTestCase {
