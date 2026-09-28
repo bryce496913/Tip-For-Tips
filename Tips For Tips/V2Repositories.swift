@@ -332,7 +332,7 @@ actor V2MigrationCoordinator {
 
     private func migrateTimestampedNotes() -> [LegacyNoteMigrationResult] {
         let formatter = DateFormatter(); formatter.dateFormat = "dd MM yyyy HH:mm"; formatter.locale = Locale(identifier: "en_US_POSIX")
-        guard let candidates = try? fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.contentModificationDateKey]).filter({ $0.pathExtension == "txt" && formatter.date(from: $0.deletingPathExtension().lastPathComponent) != nil }) else { return [] }
+        guard let candidates = try? fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.contentModificationDateKey]).filter({ $0.pathExtension == "txt" && formatter.date(from: $0.deletingPathExtension().lastPathComponent) != nil }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) else { return [] }
         let notesURL = rootURL.appendingPathComponent("Notes/notes.json")
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         var notes: [SavedNote] = []
@@ -349,8 +349,7 @@ actor V2MigrationCoordinator {
                 let created = formatter.date(from: file.deletingPathExtension().lastPathComponent) ?? values.contentModificationDate ?? Date()
                 let noteID = deterministicLegacyNoteID(name: relative)
                 if notes.contains(where: { $0.id == noteID }) {
-                    let legacy = rootURL.appendingPathComponent("Notes/Legacy", isDirectory: true); try fileManager.createDirectory(at: legacy, withIntermediateDirectories: true)
-                    if !fileManager.fileExists(atPath: legacy.appendingPathComponent(relative).path) { try fileManager.moveItem(at: file, to: legacy.appendingPathComponent(relative)) }
+                    try archiveLegacyNote(file, named: relative)
                     results.append(.init(sourceRelativePath: relative, migratedNoteID: noteID, warning: nil, failure: nil)); continue
                 }
                 let note = SavedNote(id: noteID, text: text, createdAt: created, updatedAt: values.contentModificationDate ?? created)
@@ -358,12 +357,30 @@ actor V2MigrationCoordinator {
                 try fileManager.createDirectory(at: notesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
                 try encoder.encode(StoredDataEnvelope(version: 1, records: updated)).write(to: notesURL, options: .atomic)
-                let legacy = rootURL.appendingPathComponent("Notes/Legacy", isDirectory: true); try fileManager.createDirectory(at: legacy, withIntermediateDirectories: true)
-                try fileManager.moveItem(at: file, to: legacy.appendingPathComponent(relative))
-                notes = updated; results.append(.init(sourceRelativePath: relative, migratedNoteID: note.id, warning: nil, failure: nil))
-            } catch { results.append(.init(sourceRelativePath: relative, migratedNoteID: nil, warning: nil, failure: error.localizedDescription)) }
+                // Update the in-memory snapshot as soon as the durable save succeeds. If archiving
+                // fails, later candidates must not overwrite this already-migrated note.
+                notes = updated
+                try archiveLegacyNote(file, named: relative)
+                results.append(.init(sourceRelativePath: relative, migratedNoteID: note.id, warning: nil, failure: nil))
+            } catch { results.append(.init(sourceRelativePath: relative, migratedNoteID: noteIDForLegacyNote(named: relative, in: notes), warning: nil, failure: error.localizedDescription)) }
         }
         return results
+    }
+
+    private func noteIDForLegacyNote(named name: String, in notes: [SavedNote]) -> UUID? {
+        let id = deterministicLegacyNoteID(name: name)
+        return notes.contains(where: { $0.id == id }) ? id : nil
+    }
+
+    private func archiveLegacyNote(_ source: URL, named name: String) throws {
+        let legacy = rootURL.appendingPathComponent("Notes/Legacy", isDirectory: true)
+        try fileManager.createDirectory(at: legacy, withIntermediateDirectories: true)
+        let destination = legacy.appendingPathComponent(name)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: source)
+        } else {
+            try fileManager.moveItem(at: source, to: destination)
+        }
     }
 
     private func deterministicLegacyNoteID(name: String) -> UUID {
