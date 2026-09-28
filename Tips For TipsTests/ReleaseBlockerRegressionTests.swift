@@ -10,6 +10,21 @@ private final class FailingMarkerRemovalFileManager: FileManager, @unchecked Sen
     }
 }
 
+private final class FailOnceLegacyNoteMoveFileManager: FileManager, @unchecked Sendable {
+    private let filename: String
+    private(set) var matchingMoveAttempts = 0
+
+    init(filename: String) { self.filename = filename }
+
+    override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+        if srcURL.lastPathComponent == filename && dstURL.deletingLastPathComponent().lastPathComponent == "Legacy" {
+            matchingMoveAttempts += 1
+            if matchingMoveAttempts == 1 { throw CocoaError(.fileWriteNoPermission) }
+        }
+        try super.moveItem(at: srcURL, to: dstURL)
+    }
+}
+
 final class ReleaseBlockerRegressionTests: XCTestCase {
     func testReleaseLinksMatchProductionURLsAndAreSecure() {
         let expectedURLs = [
@@ -52,6 +67,87 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
         let data = try Data(contentsOf: root.appendingPathComponent("Notes/notes.json"))
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         XCTAssertEqual(try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: data).records.map(\.text), ["valid note"])
+    }
+
+    func testTimestampedNoteArchiveFailureIsRetrySafeAcrossRelaunch() async throws {
+        let fm = FailOnceLegacyNoteMoveFileManager(filename: "10 04 2024 14:34.txt")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let firstSource = root.appendingPathComponent("10 04 2024 14:34.txt")
+        let secondSource = root.appendingPathComponent("10 04 2024 14:35.txt")
+        let unrelatedSource = root.appendingPathComponent("shopping-list.txt")
+        try Data("first legacy note".utf8).write(to: firstSource)
+        try Data("second legacy note".utf8).write(to: secondSource)
+        try Data("not a timestamped note".utf8).write(to: unrelatedSource)
+
+        let existingID = UUID()
+        let existing = SavedNote(id: existingID, text: "current-format note", createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1))
+        let notesURL = root.appendingPathComponent("Notes/notes.json")
+        try fm.createDirectory(at: notesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(StoredDataEnvelope(version: 1, records: [existing])).write(to: notesURL)
+
+        let failed = await V2MigrationCoordinator(rootURL: root, fileManager: fm).migrateIfNeeded()
+        XCTAssertFalse(failed.succeeded)
+        XCTAssertTrue(fm.fileExists(atPath: firstSource.path), "A failed archive must leave the recovery source available")
+        XCTAssertFalse(fm.fileExists(atPath: secondSource.path), "Other timestamped notes should still be archived")
+        XCTAssertTrue(fm.fileExists(atPath: unrelatedSource.path), "Unrelated text files must be ignored")
+
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let afterFailure = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)).records
+        XCTAssertEqual(afterFailure.count, 3)
+        let firstID = try XCTUnwrap(afterFailure.first(where: { $0.text == "first legacy note" })?.id)
+
+        // A new coordinator simulates relaunch: it must recognize the deterministic ID and
+        // perform only the archive operation that failed previously.
+        let retried = await V2MigrationCoordinator(rootURL: root, fileManager: fm).migrateIfNeeded()
+        XCTAssertTrue(retried.succeeded)
+        let afterRetry = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)).records
+        XCTAssertEqual(afterRetry.count, 3)
+        XCTAssertEqual(afterRetry.first(where: { $0.text == "first legacy note" })?.id, firstID)
+        XCTAssertEqual(afterRetry.filter { $0.id == firstID }.count, 1)
+        XCTAssertEqual(afterRetry.filter { $0.id == existingID }.count, 1)
+        XCTAssertEqual(fm.matchingMoveAttempts, 2, "Retry must attempt the unfinished archive again")
+        XCTAssertFalse(fm.fileExists(atPath: firstSource.path))
+        XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("Notes/Legacy/10 04 2024 14:34.txt").path))
+    }
+
+    func testExistingArchivedDestinationAndMigratedNoteDoNotDuplicate() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let source = root.appendingPathComponent("11 04 2024 09:15.txt")
+        try Data("legacy note".utf8).write(to: source)
+
+        let initial = await V2MigrationCoordinator(rootURL: root).migrateIfNeeded()
+        XCTAssertTrue(initial.succeeded)
+        let archive = root.appendingPathComponent("Notes/Legacy/11 04 2024 09:15.txt")
+        try fm.copyItem(at: archive, to: source)
+        try fm.removeItem(at: root.appendingPathComponent("V2/migration-v2-complete.json"))
+
+        let retried = await V2MigrationCoordinator(rootURL: root).migrateIfNeeded()
+        XCTAssertTrue(retried.succeeded)
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let notes = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: root.appendingPathComponent("Notes/notes.json"))).records
+        XCTAssertEqual(notes.count, 1)
+        XCTAssertFalse(fm.fileExists(atPath: source.path), "An already-archived duplicate source should be cleaned up")
+        XCTAssertTrue(fm.fileExists(atPath: archive.path))
+    }
+
+    func testNoteStoreDoesNotMigrateTimestampedLegacyFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("12 04 2024 10:20.txt")
+        try Data("coordinator-owned legacy note".utf8).write(to: source)
+
+        let notes = try await NoteStore(rootURL: root).loadNotes()
+        XCTAssertEqual(notes, [])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Notes/notes.json").path))
     }
     @MainActor
     func testSplitHandoffPreservesIncludedAndAdditionalGratuity() throws {

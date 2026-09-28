@@ -9,13 +9,12 @@ struct SavedNote: Codable, Identifiable, Equatable {
 
 
 enum NoteStorageError: LocalizedError {
-    case load, save, delete, migration
+    case load, save, delete
     var errorDescription: String? {
         switch self {
         case .load: return "Some saved notes could not be loaded."
         case .save: return "Unable to save this note. Please try again."
         case .delete: return "Unable to delete this note. Please try again."
-        case .migration: return "Some older notes could not be migrated."
         }
     }
 }
@@ -26,8 +25,6 @@ actor NoteStore {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var notesURL: URL { rootURL.appendingPathComponent("Notes", isDirectory: true).appendingPathComponent("notes.json") }
-    private var legacyURL: URL { rootURL.appendingPathComponent("Notes", isDirectory: true).appendingPathComponent("Legacy", isDirectory: true) }
-
     init(rootURL: URL? = nil, fileManager: FileManager = .default) {
         self.fileManager = fileManager
         self.rootURL = rootURL ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -37,7 +34,6 @@ actor NoteStore {
     }
 
     func loadNotes() throws -> [SavedNote] {
-        try migrateLegacyNotesIfNeeded()
         guard fileManager.fileExists(atPath: notesURL.path) else { return [] }
         do {
             let envelope = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL))
@@ -69,31 +65,6 @@ actor NoteStore {
 
     private func sort(_ notes: [SavedNote]) -> [SavedNote] { notes.sorted { $0.updatedAt == $1.updatedAt ? $0.createdAt > $1.createdAt : $0.updatedAt > $1.updatedAt } }
 
-    /// Migrates only legacy files named "dd MM yyyy HH:mm.txt". Successfully migrated files are moved
-    /// into Documents/Notes/Legacy, so the migration is idempotent and unrelated text files are ignored.
-    private func migrateLegacyNotesIfNeeded() throws {
-        let formatter = DateFormatter(); formatter.dateFormat = "dd MM yyyy HH:mm"; formatter.locale = Locale(identifier: "en_US_POSIX")
-        guard let files = try? fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey]) else { return }
-        let legacyFiles = files.filter { $0.pathExtension == "txt" && formatter.date(from: $0.deletingPathExtension().lastPathComponent) != nil }
-        guard !legacyFiles.isEmpty else { return }
-        do {
-            var notes: [SavedNote] = []
-            if fileManager.fileExists(atPath: notesURL.path), let existing = try? decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)).records { notes = existing }
-            for file in legacyFiles {
-                let text = try String(contentsOf: file, encoding: .utf8)
-                let values = try file.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
-                let parsed = formatter.date(from: file.deletingPathExtension().lastPathComponent)
-                let created = parsed ?? values.creationDate ?? values.contentModificationDate ?? Date()
-                notes.append(SavedNote(id: UUID(), text: text, createdAt: created, updatedAt: values.contentModificationDate ?? created))
-            }
-            try save(notes)
-            try fileManager.createDirectory(at: legacyURL, withIntermediateDirectories: true)
-            for file in legacyFiles {
-                let destination = legacyURL.appendingPathComponent(file.lastPathComponent)
-                if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: file) } else { try fileManager.moveItem(at: file, to: destination) }
-            }
-        } catch { throw NoteStorageError.migration }
-    }
 }
 
 @MainActor
