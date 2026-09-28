@@ -2,6 +2,7 @@ import SwiftUI
 
 @MainActor
 final class AppEnvironment: ObservableObject {
+    enum RootRoute: Equatable { case loading, migrationRecovery, onboarding, mainMenu }
     @Published private(set) var preferences: UserPreferences = .defaults
     @Published private(set) var isLoaded = false
     @Published private(set) var startupError: String?
@@ -13,10 +14,19 @@ final class AppEnvironment: ObservableObject {
     let migrationCoordinator: V2MigrationCoordinator
     let dataService: (any AppDataExporting & AppDataManaging)
 
-    init(preferencesRepository: UserPreferencesRepository = FileUserPreferencesRepository(), receiptRepository: ReceiptRepository = FileReceiptRepository(), calculationRepository: CalculationRepository = FileCalculationRepository(), currencyRateRepository: CurrencyRateRepository = FileCurrencyRateRepository(), migrationCoordinator: V2MigrationCoordinator? = nil) {
+    var rootRoute: RootRoute {
+        if isLoaded { return preferences.hasCompletedOnboarding ? .mainMenu : .onboarding }
+        return startupError == nil ? .loading : .migrationRecovery
+    }
+
+    init(rootURL: URL? = nil, userDefaults: UserDefaults = .standard, preferencesRepository: UserPreferencesRepository? = nil, receiptRepository: ReceiptRepository? = nil, calculationRepository: CalculationRepository? = nil, currencyRateRepository: CurrencyRateRepository? = nil, migrationCoordinator: V2MigrationCoordinator? = nil) {
+        let preferencesRepository = preferencesRepository ?? FileUserPreferencesRepository(rootURL: rootURL)
+        let receiptRepository = receiptRepository ?? FileReceiptRepository(rootURL: rootURL)
+        let calculationRepository = calculationRepository ?? FileCalculationRepository(rootURL: rootURL)
+        let currencyRateRepository = currencyRateRepository ?? FileCurrencyRateRepository(rootURL: rootURL)
         self.preferencesRepository = preferencesRepository; self.receiptRepository = receiptRepository; self.calculationRepository = calculationRepository; self.currencyRateRepository = currencyRateRepository
-        self.migrationCoordinator = migrationCoordinator ?? V2MigrationCoordinator(receiptRepository: receiptRepository)
-        self.dataService = FileAppDataService(receiptRepository: receiptRepository, calculationRepository: calculationRepository, preferencesRepository: preferencesRepository)
+        self.migrationCoordinator = migrationCoordinator ?? V2MigrationCoordinator(rootURL: rootURL, receiptRepository: receiptRepository)
+        self.dataService = FileAppDataService(rootURL: rootURL, receiptRepository: receiptRepository, calculationRepository: calculationRepository, preferencesRepository: preferencesRepository, userDefaults: userDefaults)
     }
     /// Migration must finish before preferences are published and workflows become reachable.
     func prepare() async {
@@ -38,10 +48,12 @@ struct Tips_For_TipsApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if appEnvironment.isLoaded && appEnvironment.preferences.hasCompletedOnboarding { MainMenu() }
-                else if appEnvironment.isLoaded { OnboardingView() }
-                else if appEnvironment.startupError != nil { MigrationRecoveryView() }
-                else { ProgressView("Preparing local data…").task { await appEnvironment.prepare() } }
+                switch appEnvironment.rootRoute {
+                case .mainMenu: MainMenu()
+                case .onboarding: OnboardingView()
+                case .migrationRecovery: MigrationRecoveryView()
+                case .loading: ProgressView("Preparing local data…").task { await appEnvironment.prepare() }
+                }
             }
                 .environmentObject(appEnvironment)
                 .preferredColorScheme(appEnvironment.preferences.appearancePreference.colorScheme)
