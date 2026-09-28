@@ -1,0 +1,70 @@
+name: iOS Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Unit and UI tests
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Print Xcode version
+        run: xcodebuild -version
+
+      - name: Resolve an installed iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          destination_id="$({ xcrun simctl list devices available --json; } | python3 -c '
+          import json
+          import sys
+
+          devices = [
+              device
+              for runtime_devices in json.load(sys.stdin)["devices"].values()
+              for device in runtime_devices
+              if device.get("isAvailable", False) and device.get("name", "").startswith("iPhone")
+          ]
+          if not devices:
+              raise SystemExit("No available iPhone simulator is installed")
+
+          preferred_names = ("iPhone 16 Pro", "iPhone 16", "iPhone 15 Pro", "iPhone 15")
+          selected = next((device for name in preferred_names for device in devices if device["name"] == name), devices[0])
+          print(selected["udid"])
+          ' )"
+          simulator_name="$(xcrun simctl list devices available | awk -v id="$destination_id" '$0 ~ id { sub(/^[[:space:]]*/, ""); sub(/ \(.*/, ""); print; exit }')"
+          echo "Resolved simulator: $simulator_name ($destination_id)"
+          echo "id=$destination_id" >> "$GITHUB_OUTPUT"
+          echo "name=$simulator_name" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit and UI tests
+        shell: bash
+        run: |
+          set -o pipefail
+          rm -rf TestResults.xcresult
+          xcodebuild test \
+            -project "Tips For Tips.xcodeproj" \
+            -scheme "Tips For Tips" \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -resultBundlePath TestResults.xcresult \
+            2>&1 | tee xcodebuild.log
+
+      - name: Upload test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            TestResults.xcresult
+            xcodebuild.log

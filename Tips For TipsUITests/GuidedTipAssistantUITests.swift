@@ -110,7 +110,7 @@ final class ModernizedUXUITests: XCTestCase {
     func testEqualAndItemizedSplitEntryPointsExist() {
         let app = launchedApp()
         app.buttons["Split a Bill"].tap()
-        XCTAssertTrue(app.staticTexts["Bill summary"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Bill Summary"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Equal"].exists)
         XCTAssertTrue(app.buttons["Itemized"].exists)
     }
