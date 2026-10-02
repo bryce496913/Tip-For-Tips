@@ -79,3 +79,95 @@ final class UXRepairTests: XCTestCase {
         XCTAssertEqual(invalid.validated.defaultPeopleCount, UserPreferences.defaults.defaultPeopleCount)
     }
 }
+
+final class GuidedTipAssistantServiceDetailValidationTests: XCTestCase {
+    @MainActor private func billModel(serviceID: String) -> GuidedTipAssistantViewModel {
+        let model = GuidedTipAssistantViewModel()
+        model.input.serviceID = serviceID
+        model.input.subtotal = 100
+        model.currentStep = .bill
+        return model
+    }
+
+    @MainActor func testBellStaffWithoutBagsStaysOnBillAndShowsInlineError() {
+        let model = billModel(serviceID: "bell-staff")
+        model.advance()
+        XCTAssertEqual(model.currentStep, .bill)
+        XCTAssertNotNil(model.numberOfBagsValidationMessage)
+        XCTAssertNil(model.validationMessage)
+    }
+
+    @MainActor func testBellStaffWithBagsAdvancesToPeople() {
+        let model = billModel(serviceID: "bell-staff")
+        model.input.numberOfBags = 2
+        model.advance()
+        XCTAssertEqual(model.currentStep, .people)
+        XCTAssertNil(model.numberOfBagsValidationMessage)
+    }
+
+    @MainActor func testHousekeepingWithoutDaysStaysOnBillAndShowsInlineError() {
+        let model = billModel(serviceID: "housekeeping")
+        model.advance()
+        XCTAssertEqual(model.currentStep, .bill)
+        XCTAssertNotNil(model.numberOfHousekeepingDaysValidationMessage)
+    }
+
+    @MainActor func testHousekeepingWithDaysAdvancesToPeople() {
+        let model = billModel(serviceID: "housekeeping")
+        model.input.numberOfHousekeepingDays = 3
+        model.advance()
+        XCTAssertEqual(model.currentStep, .people)
+    }
+
+    @MainActor func testPerDrinkBarWithoutDrinksStaysOnBillAndShowsInlineError() {
+        let model = billModel(serviceID: "bar")
+        model.input.bartenderTipMode = .perDrink
+        model.advance()
+        XCTAssertEqual(model.currentStep, .bill)
+        XCTAssertNotNil(model.numberOfDrinksValidationMessage)
+    }
+
+    @MainActor func testPerDrinkBarWithDrinksAdvancesToPeople() {
+        let model = billModel(serviceID: "bar")
+        model.input.bartenderTipMode = .perDrink
+        model.input.numberOfDrinks = 4
+        model.advance()
+        XCTAssertEqual(model.currentStep, .people)
+    }
+
+    @MainActor func testPercentageBarDoesNotRequireDrinks() {
+        let model = billModel(serviceID: "bar")
+        model.input.bartenderTipMode = .percentageOfTab
+        model.advance()
+        XCTAssertEqual(model.currentStep, .people)
+        XCTAssertNil(model.numberOfDrinksValidationMessage)
+    }
+
+    @MainActor func testSwitchingToPercentageServiceClearsOldInlineValidation() {
+        let model = billModel(serviceID: "bell-staff")
+        model.advance()
+        XCTAssertNotNil(model.numberOfBagsValidationMessage)
+        let restaurant = try! XCTUnwrap(model.services.first { $0.id == "restaurant" })
+        model.selectService(restaurant)
+        XCTAssertNil(model.numberOfBagsValidationMessage)
+        model.advance()
+        XCTAssertEqual(model.currentStep, .people)
+    }
+
+    @MainActor func testMissingDetailAtPeopleReturnsToBillInsteadOfShowingPeopleError() {
+        let model = billModel(serviceID: "housekeeping")
+        model.currentStep = .people
+        model.advance()
+        XCTAssertEqual(model.currentStep, .bill)
+        XCTAssertNotNil(model.numberOfHousekeepingDaysValidationMessage)
+        XCTAssertNil(model.validationMessage)
+    }
+
+    @MainActor func testInlineErrorClearsAsSoonAsDetailBecomesValid() {
+        let model = billModel(serviceID: "bell-staff")
+        model.advance()
+        model.input.numberOfBags = 1
+        model.serviceDetailsChanged()
+        XCTAssertNil(model.numberOfBagsValidationMessage)
+    }
+}

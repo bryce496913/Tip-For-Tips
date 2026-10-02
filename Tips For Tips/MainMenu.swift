@@ -140,6 +140,9 @@ final class GuidedTipAssistantViewModel: ObservableObject {
     @Published var currentStep: GuidedTipStep = .service
     @Published var result: TipCalculationResult?
     @Published var validationMessage: String?
+    @Published private(set) var numberOfBagsValidationMessage: String?
+    @Published private(set) var numberOfHousekeepingDaysValidationMessage: String?
+    @Published private(set) var numberOfDrinksValidationMessage: String?
     @Published var searchText = ""
     @Published var selectedCategory: TippingServiceCategory?
     @Published var saveConfirmation: String?
@@ -162,20 +165,34 @@ final class GuidedTipAssistantViewModel: ObservableObject {
     var selectedService: TippingService? { services.first { $0.id == input.serviceID } }
     var filteredServices: [TippingService] { services.filter { service in (selectedCategory == nil || service.category == selectedCategory) && (searchText.isEmpty || service.name.localizedCaseInsensitiveContains(searchText) || service.recommendationSummary.localizedCaseInsensitiveContains(searchText)) } }
 
-    func selectService(_ service: TippingService) { input.serviceID = service.id; invalidate() }
+    func selectService(_ service: TippingService) { input.serviceID = service.id; serviceDetailsChanged(); invalidate() }
     func setQuality(_ quality: ServiceQuality) { input.serviceQuality = quality; invalidate() }
     func setGratuity(_ status: GratuityStatus) { input.gratuityStatus = status; invalidate() }
     func updateAmounts() { invalidate() }
+    func serviceDetailsChanged() {
+        let wasShowingValidation = numberOfBagsValidationMessage != nil || numberOfHousekeepingDaysValidationMessage != nil || numberOfDrinksValidationMessage != nil
+        clearIrrelevantServiceDetailValidation()
+        if wasShowingValidation { _ = validateServiceDetails() }
+    }
     func back() { validationMessage = nil; currentStep = GuidedTipStep(rawValue: max(0, currentStep.rawValue - 1)) ?? .service }
-    func restart() { input = .defaults(preferences: preferences); currentStep = .service; result = nil; validationMessage = nil; savedCalculationID = nil }
+    func restart() { input = .defaults(preferences: preferences); currentStep = .service; result = nil; validationMessage = nil; numberOfBagsValidationMessage = nil; numberOfHousekeepingDaysValidationMessage = nil; numberOfDrinksValidationMessage = nil; savedCalculationID = nil }
 
     func advance() {
+        if currentStep == .bill, !validateServiceDetails() {
+            validationMessage = nil
+            return
+        }
         validationMessage = validate(step: currentStep)
         guard validationMessage == nil else { return }
         if currentStep == .people { calculate() } else { currentStep = GuidedTipStep(rawValue: currentStep.rawValue + 1) ?? .result }
     }
 
     func calculate() {
+        guard validateServiceDetails() else {
+            currentStep = .bill
+            validationMessage = nil
+            return
+        }
         do { result = try engine.calculate(input: input, preferences: preferences); currentStep = .result; validationMessage = nil }
         catch { validationMessage = error.localizedDescription }
     }
@@ -203,13 +220,40 @@ final class GuidedTipAssistantViewModel: ObservableObject {
         ], sourceRecordID: result.id))
     }
 
+    @discardableResult
+    func validateServiceDetails() -> Bool {
+        clearIrrelevantServiceDetailValidation()
+        switch input.serviceID {
+        case "bell-staff":
+            numberOfBagsValidationMessage = positiveWholeNumberError(input.numberOfBags, fieldName: "number of bags")
+        case "housekeeping":
+            numberOfHousekeepingDaysValidationMessage = positiveWholeNumberError(input.numberOfHousekeepingDays, fieldName: "number of days")
+        case "bar" where input.bartenderTipMode == .perDrink:
+            numberOfDrinksValidationMessage = positiveWholeNumberError(input.numberOfDrinks, fieldName: "number of drinks")
+        default:
+            break
+        }
+        return numberOfBagsValidationMessage == nil && numberOfHousekeepingDaysValidationMessage == nil && numberOfDrinksValidationMessage == nil
+    }
+
+    private func positiveWholeNumberError(_ value: Int?, fieldName: String) -> String? {
+        guard let value, value > 0 else { return "Enter a positive whole \(fieldName)." }
+        return nil
+    }
+
+    private func clearIrrelevantServiceDetailValidation() {
+        if input.serviceID != "bell-staff" { numberOfBagsValidationMessage = nil }
+        if input.serviceID != "housekeeping" { numberOfHousekeepingDaysValidationMessage = nil }
+        if input.serviceID != "bar" || input.bartenderTipMode != .perDrink { numberOfDrinksValidationMessage = nil }
+    }
+
     private func invalidate() { result = nil; validationMessage = nil; savedCalculationID = nil; saveConfirmation = nil }
     private func validate(step: GuidedTipStep) -> String? {
         switch step {
         case .service: return selectedService == nil ? "Select a service." : nil
         case .quality: return nil
         case .gratuity: if input.gratuityStatus == .yes, input.includedGratuityEntryMode != .unknown, (input.includedGratuityAmount ?? input.includedGratuityPercentage ?? 0) < 0 { return "Included gratuity cannot be negative." }; return nil
-        case .bill: do { _ = try engine.calculate(input: input); return nil } catch TipCalculationError.missingBillAmount { return "Enter a valid subtotal or final total." } catch TipCalculationError.missingServiceDetail { return nil } catch { return error.localizedDescription }
+        case .bill: do { _ = try engine.calculate(input: input); return nil } catch TipCalculationError.missingBillAmount { return "Enter a valid subtotal or final total." } catch { return error.localizedDescription }
         case .people: return input.peopleCount < 1 ? "Enter a whole number of people." : nil
         case .result: return nil
         }
@@ -232,7 +276,7 @@ struct GuidedTipAssistantView: View {
     private var qualityStep: some View { ThemedCard { Text("How was the service?").appFont(.title2); ForEach(ServiceQuality.allCases) { q in RadioButton(title: q.label, isSelected: model.input.serviceQuality == q) { model.setQuality(q) }; Text(q.guidance).appFont(.body).foregroundStyle(AppTheme.secondaryText) } } }
     private var gratuityStep: some View { ThemedCard { Text("Is gratuity already included?").appFont(.title2); HStack { ForEach(GratuityStatus.allCases) { status in RadioButton(title: status.rawValue.capitalized, isSelected: model.input.gratuityStatus == status) { model.setGratuity(status) } } }; if model.input.gratuityStatus == .yes { Picker("Included charge", selection: $model.input.includedGratuityEntryMode) { Text("Unknown").tag(IncludedGratuityEntryMode.unknown); Text("Percent").tag(IncludedGratuityEntryMode.percentage); Text("Dollars").tag(IncludedGratuityEntryMode.amount) }.pickerStyle(.segmented); if model.input.includedGratuityEntryMode == .percentage { DecimalField(title: "Included percent", value: $model.input.includedGratuityPercentage) { model.updateAmounts() } }; if model.input.includedGratuityEntryMode == .amount { DecimalField(title: "Included amount", value: $model.input.includedGratuityAmount) { model.updateAmounts() } }; Toggle("Receipt total already includes this charge", isOn: $model.input.finalTotalIncludesIncludedGratuity).appFont(.body) }; if model.input.gratuityStatus == .unsure { Text("Look for gratuity, automatic gratuity, service charge, hospitality charge, administrative fee, delivery fee, and suggested gratuity. Suggested gratuity is not included; delivery fees are not automatically driver tips.").appFont(.body) } } }
     private var billStep: some View { ThemedCard { Text("Bill details").appFont(.title2); DecimalField(title: "Subtotal", value: $model.input.subtotal) { model.updateAmounts() }; DecimalField(title: "Tax", value: $model.input.tax) { model.updateAmounts() }; DecimalField(title: "Final total", value: $model.input.finalTotal) { model.updateAmounts() }; TextField("Currency code", text: $model.input.currencyCode).textFieldStyle(AppTextFieldStyle()).textInputAutocapitalization(.characters); Picker("Calculation basis", selection: $model.input.calculationBasis) { ForEach(TipCalculationBasis.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented); Text(model.input.calculationBasis == .subtotalBeforeTax ? "Traditionally, restaurant tips may be calculated using the pre-tax subtotal." : "Many payment terminals calculate suggested tips using the final total.").appFont(.body); serviceSpecificFields } }
-    @ViewBuilder private var serviceSpecificFields: some View { if model.input.serviceID == "bell-staff" { WholeNumberField(title: "Number of bags", value: $model.input.numberOfBags) }; if model.input.serviceID == "housekeeping" { WholeNumberField(title: "Number of days", value: $model.input.numberOfHousekeepingDays) }; if model.input.serviceID == "bar" { Picker("Bar tip mode", selection: $model.input.bartenderTipMode) { Text("Percentage of tab").tag(BartenderTipMode.percentageOfTab); Text("Per drink").tag(BartenderTipMode.perDrink) }.pickerStyle(.segmented); if model.input.bartenderTipMode == .perDrink { WholeNumberField(title: "Number of drinks", value: $model.input.numberOfDrinks) } }; if model.input.serviceID == "food-delivery" { Text("Delivery difficulty").appFont(.headline); DifficultyToggle(title: "Bad weather", flag: .badWeather, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Long distance", flag: .longDistance, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Difficult entrance or stairs", flag: .difficultEntrance, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Large order", flag: .largeOrder, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Late-night delivery", flag: .lateNight, selection: $model.input.foodDeliveryDifficulty) } }
+    @ViewBuilder private var serviceSpecificFields: some View { if model.input.serviceID == "bell-staff" { WholeNumberField(title: "Number of bags", value: $model.input.numberOfBags, onChange: model.serviceDetailsChanged); if let error = model.numberOfBagsValidationMessage { InlineErrorView(message: error) } }; if model.input.serviceID == "housekeeping" { WholeNumberField(title: "Number of days", value: $model.input.numberOfHousekeepingDays, onChange: model.serviceDetailsChanged); if let error = model.numberOfHousekeepingDaysValidationMessage { InlineErrorView(message: error) } }; if model.input.serviceID == "bar" { Picker("Bar tip mode", selection: $model.input.bartenderTipMode) { Text("Percentage of tab").tag(BartenderTipMode.percentageOfTab); Text("Per drink").tag(BartenderTipMode.perDrink) }.pickerStyle(.segmented).onChange(of: model.input.bartenderTipMode) { _ in model.serviceDetailsChanged() }; if model.input.bartenderTipMode == .perDrink { WholeNumberField(title: "Number of drinks", value: $model.input.numberOfDrinks, onChange: model.serviceDetailsChanged); if let error = model.numberOfDrinksValidationMessage { InlineErrorView(message: error) } } }; if model.input.serviceID == "food-delivery" { Text("Delivery difficulty").appFont(.headline); DifficultyToggle(title: "Bad weather", flag: .badWeather, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Long distance", flag: .longDistance, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Difficult entrance or stairs", flag: .difficultEntrance, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Large order", flag: .largeOrder, selection: $model.input.foodDeliveryDifficulty); DifficultyToggle(title: "Late-night delivery", flag: .lateNight, selection: $model.input.foodDeliveryDifficulty) } }
     private var peopleStep: some View { ThemedCard { Text("How many people are paying?").appFont(.title2); Stepper(value: $model.input.peopleCount, in: 1...99) { Text("\(model.input.peopleCount) people").appFont(.title2) }; Text("This creates a simple even per-person amount. Advanced allocation comes later.").appFont(.body) } }
     private var resultStep: some View { VStack(spacing: AppSpacing.section) { if let r = model.result { ResultSummary(result: r, showExplanation: model.preferences.showTippingExplanations); ResultActions(model: model) } else { EmptyStateView(systemImage: "exclamationmark.triangle", title: "No result", message: "Go back and calculate again.") }; SecondaryButton(title: "Start Over", systemImage: "arrow.counterclockwise") { model.restart() } } }
 }
@@ -240,7 +284,7 @@ struct GuidedTipAssistantView: View {
 extension ServiceQuality { var label: String { rawValue.capitalized }; var guidance: String { switch self { case .poor: return "Important problems directly related to the service."; case .standard: return "Service met normal expectations."; case .good: return "Attentive and helpful service."; case .exceptional: return "Unusually thoughtful or difficult service." } } }
 
 struct DecimalField: View { let title: String; @Binding var value: Decimal?; let onChange: () -> Void; @State private var text = ""; var body: some View { TextField(title, text: $text).keyboardType(.decimalPad).textFieldStyle(AppTextFieldStyle()).onAppear { if let value { text = "\(value)" } }.onChange(of: text) { newValue in value = LocalizedDecimalParser.parse(newValue); onChange() }.accessibilityLabel(title) } }
-struct WholeNumberField: View { let title: String; @Binding var value: Int?; @State private var text = ""; var body: some View { TextField(title, text: $text).keyboardType(.numberPad).textFieldStyle(AppTextFieldStyle()).onAppear { if let value { text = "\(value)" } }.onChange(of: text) { newValue in if let int = Int(newValue), String(int) == newValue, int > 0 { value = int } else { value = nil } }.accessibilityLabel(title) } }
+struct WholeNumberField: View { let title: String; @Binding var value: Int?; var onChange: () -> Void = {}; @State private var text = ""; var body: some View { TextField(title, text: $text).keyboardType(.numberPad).textFieldStyle(AppTextFieldStyle()).onAppear { if let value { text = "\(value)" } }.onChange(of: text) { newValue in if let int = Int(newValue), String(int) == newValue, int > 0 { value = int } else { value = nil }; onChange() }.accessibilityLabel(title) } }
 struct DifficultyToggle: View { let title: String; let flag: FoodDeliveryDifficulty; @Binding var selection: FoodDeliveryDifficulty; var body: some View { Toggle(title, isOn: Binding(get: { selection.contains(flag) }, set: { isSelected in if isSelected { selection.insert(flag) } else { selection.remove(flag) } })).appFont(.body) } }
 struct ResultSummary: View { let result: TipCalculationResult; var showExplanation = true; var body: some View { ThemedCard { Text("Recommended Tip").appFont(.title2); Text(result.recommendedPercentage.map { "\($0)% — \(formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode))" } ?? formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode)).font(.appMoneyPrimary).monospacedDigit().foregroundStyle(AppTheme.highlight).minimumScaleFactor(0.75).accessibilityLabel("Recommended tip"); ResultSummaryRow(label: "Final total", value: formatMoney(result.finalTotal, code: result.input.currencyCode)); ResultSummaryRow(label: "Split between \(result.input.peopleCount) people", value: "\(formatMoney(result.amountPerPerson, code: result.input.currencyCode)) each"); ResultSummaryRow(label: result.normalRange == nil ? "Customary guidance" : "Customary range", value: result.customaryGuidance); if result.input.gratuityStatus == .yes { ResultSummaryRow(label: "Included gratuity", value: formatMoney(result.includedGratuityAmount, code: result.input.currencyCode)); ResultSummaryRow(label: "Suggested additional", value: formatMoney(result.suggestedAdditionalTip, code: result.input.currencyCode)); ResultSummaryRow(label: "Combined gratuity", value: formatMoney(result.combinedGratuity, code: result.input.currencyCode)) }; if showExplanation { Text(result.explanation).appFont(.body) }; if result.input.gratuityStatus == .unsure { Text("The receipt charge is uncertain. Confirm whether it is gratuity before adding more; zero additional tip is allowed.").appFont(.body).foregroundStyle(AppTheme.highlight) }; if let lower = result.lowerAlternative { ResultSummaryRow(label: lower.label, value: alternativeText(lower, code: result.input.currencyCode)) }; if let higher = result.higherAlternative { ResultSummaryRow(label: higher.label, value: alternativeText(higher, code: result.input.currencyCode)) } }.accessibilityElement(children: .contain) } }
 struct ResultActions: View { @ObservedObject var model: GuidedTipAssistantViewModel; var body: some View { ThemedCard { Text("Next actions").appFont(.title2); NavigationLink("Split This Bill", value: model.splitRoute()); Button("Save Calculation") { Task { await model.saveResult() } }; NavigationLink("Convert Total", value: model.convertRoute()); if let id = model.savedCalculationID { NavigationLink("Add Receipt", value: AppRoute.receiptScanner(.attachToCalculation(id))) } else { Button("Save Before Adding Receipt") { Task { await model.saveResult() } } }; ShareLink(item: model.shareSummary) { Text("Share Summary") }; NavigationLink("Read Service Guide", value: model.guideRoute()) }.appFont(.body).foregroundStyle(AppTheme.accent) } }
