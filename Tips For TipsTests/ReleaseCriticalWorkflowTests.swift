@@ -143,24 +143,56 @@ final class HistoricalReceiptDecodingRegressionTests: XCTestCase {
 }
 
 final class ReceiptEditPersistenceRegressionTests: XCTestCase {
+    func testReceiptDetailAlwaysUsesSharedEditorWithReviewAwareTitle() {
+        let reviewed = ReceiptRecord(id: UUID(), merchantName: "Reviewed", receiptDate: nil, subtotal: 10, tax: 1, total: 11, detectedCharges: [], imageFilename: nil, thumbnailFilename: nil, notes: "", confirmationStatus: .userConfirmed, createdAt: Date(), updatedAt: Date(), financialReviewVersion: ReceiptFinancialReviewValidator.currentVersion)
+        let charge = DetectedReceiptCharge(label: "Service charge", amount: 2, percentage: 20, kind: .serviceCharge, confidence: 1, userClassification: .unreviewed)
+        let needsReview = ReceiptRecord(id: UUID(), merchantName: "Review", receiptDate: nil, subtotal: 10, tax: 1, total: 13, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", confirmationStatus: .needsReview, createdAt: Date(), updatedAt: Date())
+
+        XCTAssertEqual(ReceiptDetailEditAction.title(for: reviewed), "Edit Receipt")
+        XCTAssertEqual(ReceiptDetailEditAction.context(for: reviewed), .editReceipt(reviewed.id))
+        XCTAssertEqual(ReceiptDetailEditAction.title(for: needsReview), "Edit and Review Charges")
+        XCTAssertEqual(ReceiptDetailEditAction.context(for: needsReview), .editReceipt(needsReview.id))
+    }
+
     @MainActor func testEditingExistingReceiptPersistsIdentityDatesImageAndValuesWithoutDuplicate() async throws {
         let store = try TemporaryTestStore(#function); defer { store.remove() }
         let repo = FileReceiptRepository(rootURL: store.root)
+        let calculationRepo = FileCalculationRepository(rootURL: store.root)
         let id = UUID(), created = Date(timeIntervalSince1970: 1_700_000_000)
-        let original = ReceiptRecord(id: id, merchantName: "Old", receiptDate: created, subtotal: 10, tax: 1, total: 11, detectedCharges: [], imageFilename: "\(id).jpg", thumbnailFilename: "\(id)-thumb.jpg", notes: "old", createdAt: created, updatedAt: created)
+        let falseChargeID = UUID()
+        let falseCharge = DetectedReceiptCharge(id: falseChargeID, label: "False OCR charge", amount: 99, percentage: nil, kind: .unknownCharge, confidence: 0.2, userClassification: .otherOrUnclear, isIncludedInReceiptTotal: false, source: .ocr)
+        let unreviewedCharge = DetectedReceiptCharge(label: "Possible service charge", amount: 2, percentage: 18, kind: .serviceCharge, confidence: 0.7, userClassification: .unreviewed, source: .ocr)
+        let original = ReceiptRecord(id: id, merchantName: "Old", receiptDate: created, currencyCode: "USD", subtotal: 10, tax: 1, total: 11, detectedCharges: [falseCharge, unreviewedCharge], imageFilename: "\(id).jpg", thumbnailFilename: "\(id)-thumb.jpg", recognizedText: "ORIGINAL OCR TEXT", notes: "old", confirmationStatus: .needsReview, createdAt: created, updatedAt: created)
         _ = try await repo.create(draft: original, fullImage: testImage(), thumbnail: testImage())
-        let model = ReceiptScannerViewModel(context: .editReceipt(id), repository: repo, calculationRepository: FileCalculationRepository(rootURL: store.root))
+        let linked = SavedCalculationRecord(id: UUID(), recordType: .tipOnly, tipResult: nil, splitResult: nil, receiptID: id, merchantName: "Old", notes: "linked", currencyConversion: nil, shareSummary: nil, createdAt: created, updatedAt: created)
+        try await calculationRepo.saveCalculation(linked)
+        let model = ReceiptScannerViewModel(context: .editReceipt(id), repository: repo, calculationRepository: calculationRepo)
         await model.loadExistingReceiptIfNeeded()
-        model.draft?.merchantName = "New Merchant"; model.draft?.subtotalText = "20.00"; model.draft?.taxText = "2.00"; model.draft?.totalText = "25.00"; model.draft?.notes = "updated"
-        model.draft?.detectedCharges = [.init(id: UUID(), label: "Service charge", amountText: "3.00", percentageText: "15", amount: 3, percentage: 15, kind: .serviceCharge, confidence: 1, userClassification: .serviceChargeNotGratuity, isIncludedInReceiptTotal: true, source: .manual)]
+        XCTAssertTrue(model.hasUnreviewedFinancialCharges)
+        let editedDate = Date(timeIntervalSince1970: 1_710_000_000)
+        let addedChargeID = UUID()
+        model.draft?.merchantName = "New Merchant"; model.draft?.receiptDate = editedDate; model.draft?.currencyCode = "CAD"; model.draft?.subtotalText = "20.00"; model.draft?.taxText = "2.00"; model.draft?.totalText = "25.00"; model.draft?.notes = "updated"
+        model.draft?.detectedCharges = [.init(id: addedChargeID, label: "Service charge", amountText: "3.00", percentageText: "15", amount: 3, percentage: 15, kind: .serviceCharge, confidence: 1, userClassification: .serviceChargeNotGratuity, isIncludedInReceiptTotal: true, source: .manual)]
+        XCTAssertFalse(model.hasUnreviewedFinancialCharges)
         let savedID = await model.saveReceipt(); XCTAssertEqual(savedID, id)
 
         let loaded = try await FileReceiptRepository(rootURL: store.root).receipt(id: id)
         let reloaded = try XCTUnwrap(loaded)
         XCTAssertEqual(reloaded.id, id); XCTAssertEqual(reloaded.createdAt, created)
-        XCTAssertEqual(reloaded.merchantName, "New Merchant"); XCTAssertEqual(reloaded.subtotal, 20); XCTAssertEqual(reloaded.tax, 2); XCTAssertEqual(reloaded.total, 25); XCTAssertEqual(reloaded.notes, "updated")
-        XCTAssertEqual(reloaded.detectedCharges.first?.amount, 3); XCTAssertEqual(reloaded.detectedCharges.first?.label, "Service charge")
+        XCTAssertGreaterThan(reloaded.updatedAt, created)
+        XCTAssertEqual(reloaded.merchantName, "New Merchant"); XCTAssertEqual(reloaded.receiptDate, editedDate); XCTAssertEqual(reloaded.currencyCode, "CAD")
+        XCTAssertEqual(reloaded.subtotal, 20); XCTAssertEqual(reloaded.tax, 2); XCTAssertEqual(reloaded.total, 25); XCTAssertEqual(reloaded.notes, "updated")
+        XCTAssertEqual(reloaded.detectedCharges.count, 1); XCTAssertFalse(reloaded.detectedCharges.contains { $0.id == falseChargeID })
+        XCTAssertEqual(reloaded.detectedCharges.first?.id, addedChargeID); XCTAssertEqual(reloaded.detectedCharges.first?.amount, 3); XCTAssertEqual(reloaded.detectedCharges.first?.percentage, 15); XCTAssertEqual(reloaded.detectedCharges.first?.label, "Service charge")
+        XCTAssertEqual(reloaded.detectedCharges.first?.userClassification, .serviceChargeNotGratuity); XCTAssertEqual(reloaded.detectedCharges.first?.isIncludedInReceiptTotal, true)
         XCTAssertEqual(reloaded.imageFilename, "\(id).jpg"); XCTAssertEqual(reloaded.thumbnailFilename, "\(id)-thumb.jpg")
+        XCTAssertEqual(reloaded.recognizedText, "ORIGINAL OCR TEXT")
+        let preservedImage = try await repo.loadImage(filename: "\(id).jpg")
+        let preservedThumbnail = try await repo.loadThumbnail(filename: "\(id)-thumb.jpg")
+        XCTAssertNotNil(preservedImage); XCTAssertNotNil(preservedThumbnail)
+        XCTAssertTrue(ReceiptFinancialReviewValidator().review(reloaded).isReadyForFinancialUse)
+        let linkedAfterEdit = try await calculationRepo.fetchCalculations().first { $0.id == linked.id }
+        XCTAssertEqual(linkedAfterEdit?.receiptID, id)
         let allReceipts = try await FileReceiptRepository(rootURL: store.root).fetchReceipts(); XCTAssertEqual(allReceipts.count, 1)
     }
 }

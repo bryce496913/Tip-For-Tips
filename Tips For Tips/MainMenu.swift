@@ -338,6 +338,20 @@ struct CalculationDetailView: View {
 }
 enum ReceiptImageState { case loading, metadataOnly, available(UIImage), missing, corrupt, failed(String) }
 
+/// Keeps the receipt-detail entry point consistent: every receipt uses the same
+/// editor, while receipts that are not financially ready receive stronger copy.
+enum ReceiptDetailEditAction {
+    static func title(for receipt: ReceiptRecord) -> String {
+        ReceiptFinancialReviewValidator().review(receipt).isReadyForFinancialUse
+            ? "Edit Receipt"
+            : "Edit and Review Charges"
+    }
+
+    static func context(for receipt: ReceiptRecord) -> ReceiptScannerContext {
+        .editReceipt(receipt.id)
+    }
+}
+
 struct ReceiptDetailView: View {
     let receiptID: UUID
     let preferences: UserPreferences
@@ -367,7 +381,8 @@ struct ReceiptDetailView: View {
                     Text(receipt.notes.isEmpty ? "No notes" : receipt.notes).appFont(.body)
                     ShareLink(item: ShareSummaryBuilder().receiptSummary(receipt)) { Text("Share summary only") }
                     let review = ReceiptFinancialReviewValidator().review(receipt)
-                    if !review.isReadyForFinancialUse { Label("Review receipt charges", systemImage: "exclamationmark.triangle").foregroundStyle(AppTheme.highlight); Text("This receipt contains gratuity or service-charge information that has not been fully confirmed. Review the charges before calculating, splitting, or converting the bill.").appFont(.body); NavigationLink { ReceiptScannerView(context: .editReceipt(receipt.id), preferences: preferences, repository: repository, calculationRepository: calculationRepository) } label: { Label("Edit and Review Charges", systemImage: "pencil") } }
+                    if !review.isReadyForFinancialUse { Label("Review receipt charges", systemImage: "exclamationmark.triangle").foregroundStyle(AppTheme.highlight); Text("This receipt contains gratuity or service-charge information that has not been fully confirmed. Review the charges before calculating, splitting, or converting the bill.").appFont(.body) }
+                    NavigationLink { ReceiptScannerView(context: ReceiptDetailEditAction.context(for: receipt), preferences: preferences, repository: repository, calculationRepository: calculationRepository) } label: { Label(ReceiptDetailEditAction.title(for: receipt), systemImage: "pencil") }
                     NavigationLink { GuidedTipAssistantView(preferences: preferences, prefilledInput: receipt.tipCalculationInput(defaults: preferences), linkedReceiptID: receipt.id, repository: calculationRepository) } label: { Label("Calculate Tip", systemImage: "percent") }.disabled(!review.isReadyForFinancialUse)
                     NavigationLink { SplitBillCalculator(context: .receipt(receipt), preferences: preferences, repository: calculationRepository) } label: { Label("Split Bill", systemImage: "person.2") }.disabled(!review.isReadyForFinancialUse)
                     NavigationLink { CurrencyConverter(context: CurrencyConversionContext(sourceCurrencyCode: receipt.currencyCode.isEmpty ? preferences.homeCurrencyCode : receipt.currencyCode, values: receipt.convertibleAmounts, sourceRecordID: receipt.id), preferences: preferences, repository: currencyRateRepository) } label: { Label("Convert Currency", systemImage: "arrow.left.arrow.right") }.disabled(!review.isReadyForFinancialUse)
