@@ -13,6 +13,8 @@ final class AppEnvironment: ObservableObject {
     let currencyRateRepository: CurrencyRateRepository
     let migrationCoordinator: V2MigrationCoordinator
     let dataService: (any AppDataExporting & AppDataManaging)
+    private var preferenceUpdateInProgress = false
+    private var preferenceUpdateWaiters: [CheckedContinuation<Void, Never>] = []
 
     var rootRoute: RootRoute {
         if isLoaded { return preferences.hasCompletedOnboarding ? .mainMenu : .onboarding }
@@ -36,7 +38,18 @@ final class AppEnvironment: ObservableObject {
         do { preferences = (try await preferencesRepository.loadPreferences()).validated; if ProcessInfo.processInfo.arguments.contains("-ui-testing") { preferences.hasCompletedOnboarding = true }; migrationRecoveryIssues = []; isLoaded = true }
         catch { startupError = error.localizedDescription }
     }
-    func updatePreferences(_ mutation: (inout UserPreferences) -> Void) async throws { var updated = preferences; mutation(&updated); updated = updated.validated; try await preferencesRepository.savePreferences(updated); preferences = updated }
+    func updatePreferences(_ mutation: (inout UserPreferences) -> Void) async throws {
+        if preferenceUpdateInProgress {
+            await withCheckedContinuation { preferenceUpdateWaiters.append($0) }
+        } else { preferenceUpdateInProgress = true }
+        defer {
+            if preferenceUpdateWaiters.isEmpty { preferenceUpdateInProgress = false }
+            else { preferenceUpdateWaiters.removeFirst().resume() }
+        }
+        // Read the live snapshot only after earlier mutations have finished persisting.
+        var updated = preferences; mutation(&updated); updated = updated.validated
+        try await preferencesRepository.savePreferences(updated); preferences = updated
+    }
     func quarantineAndRetry(_ issue: MigrationRecoveryIssue) async { do { try await migrationCoordinator.quarantine(issue, appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown", build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"); await prepare() } catch { startupError = "The unreadable legacy source could not be quarantined. Try again or export recovery details." } }
     func resetAfterDataDeletion() async { await prepare() }
     func deleteAndRetry(_ issue: MigrationRecoveryIssue) async { do { try await migrationCoordinator.deleteSource(issue); await prepare() } catch { startupError = "The selected unreadable legacy source could not be deleted." } }

@@ -172,7 +172,7 @@ final class ReceiptEditPersistenceRegressionTests: XCTestCase {
         let editedDate = Date(timeIntervalSince1970: 1_710_000_000)
         let addedChargeID = UUID()
         model.draft?.merchantName = "New Merchant"; model.draft?.receiptDate = editedDate; model.draft?.currencyCode = "CAD"; model.draft?.subtotalText = "20.00"; model.draft?.taxText = "2.00"; model.draft?.totalText = "25.00"; model.draft?.notes = "updated"
-        model.draft?.detectedCharges = [.init(id: addedChargeID, label: "Service charge", amountText: "3.00", percentageText: "15", amount: 3, percentage: 15, kind: .serviceCharge, confidence: 1, userClassification: .serviceChargeNotGratuity, isIncludedInReceiptTotal: true, source: .manual)]
+        model.draft?.detectedCharges = [.init(id: addedChargeID, label: "Service charge", amountText: "3.00", percentageText: "15", amount: 3, percentage: 15, kind: .serviceCharge, confidence: 1, userClassification: .notRelevant, isIncludedInReceiptTotal: true, source: .manual)]
         XCTAssertFalse(model.hasUnreviewedFinancialCharges)
         let savedID = await model.saveReceipt(); XCTAssertEqual(savedID, id)
 
@@ -184,7 +184,7 @@ final class ReceiptEditPersistenceRegressionTests: XCTestCase {
         XCTAssertEqual(reloaded.subtotal, 20); XCTAssertEqual(reloaded.tax, 2); XCTAssertEqual(reloaded.total, 25); XCTAssertEqual(reloaded.notes, "updated")
         XCTAssertEqual(reloaded.detectedCharges.count, 1); XCTAssertFalse(reloaded.detectedCharges.contains { $0.id == falseChargeID })
         XCTAssertEqual(reloaded.detectedCharges.first?.id, addedChargeID); XCTAssertEqual(reloaded.detectedCharges.first?.amount, 3); XCTAssertEqual(reloaded.detectedCharges.first?.percentage, 15); XCTAssertEqual(reloaded.detectedCharges.first?.label, "Service charge")
-        XCTAssertEqual(reloaded.detectedCharges.first?.userClassification, .serviceChargeNotGratuity); XCTAssertEqual(reloaded.detectedCharges.first?.isIncludedInReceiptTotal, true)
+        XCTAssertEqual(reloaded.detectedCharges.first?.userClassification, .notRelevant); XCTAssertEqual(reloaded.detectedCharges.first?.isIncludedInReceiptTotal, true)
         XCTAssertEqual(reloaded.imageFilename, "\(id).jpg"); XCTAssertEqual(reloaded.thumbnailFilename, "\(id)-thumb.jpg")
         XCTAssertEqual(reloaded.recognizedText, "ORIGINAL OCR TEXT")
         let preservedImage = try await repo.loadImage(filename: "\(id).jpg")
@@ -282,5 +282,310 @@ final class OnboardingRoutingRegressionTests: XCTestCase {
         let environment = AppEnvironment(rootURL: store.root, userDefaults: store.defaults); var prefs = UserPreferences.defaults; prefs.hasCompletedOnboarding = true; try await environment.preferencesRepository.savePreferences(prefs); await environment.prepare(); XCTAssertEqual(environment.rootRoute, .mainMenu)
         let report = await environment.dataService.deleteAllLocalData(includeRecoveryData: false); XCTAssertTrue(report.completedFully); await environment.resetAfterDataDeletion()
         XCTAssertEqual(environment.rootRoute, .onboarding); XCTAssertFalse(environment.preferences.hasCompletedOnboarding)
+    }
+}
+
+private final class FailingReceiptBackupMoveFileManager: FileManager, @unchecked Sendable {
+    var failThumbnailBackup = false
+    override func moveItem(at source: URL, to destination: URL) throws {
+        if failThumbnailBackup, source.deletingLastPathComponent().lastPathComponent == "Thumbnails" {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try super.moveItem(at: source, to: destination)
+    }
+}
+
+final class FinalReleaseHardeningTests: XCTestCase {
+    func testRejectedDuplicateCreatePreservesExistingReceiptImages() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let repo = FileReceiptRepository(rootURL: store.root)
+        let receipt = makeReceipt()
+        let original = try await repo.create(draft: receipt, fullImage: testImage(), thumbnail: testImage(.green))
+        let imageURL = store.root.appendingPathComponent("V2/Receipts/Images/\(original.imageFilename!)")
+        let thumbURL = store.root.appendingPathComponent("V2/Receipts/Thumbnails/\(original.thumbnailFilename!)")
+        let imageBefore = try Data(contentsOf: imageURL), thumbBefore = try Data(contentsOf: thumbURL)
+        do { _ = try await repo.create(draft: original, fullImage: testImage(.red), thumbnail: testImage(.red)); XCTFail("Duplicate creation must fail") }
+        catch { XCTAssertEqual(error as? ReceiptStorageError, .imageWrite) }
+        XCTAssertEqual(try Data(contentsOf: imageURL), imageBefore)
+        XCTAssertEqual(try Data(contentsOf: thumbURL), thumbBefore)
+        let saved = try await repo.receipt(id: original.id)
+        XCTAssertEqual(saved, original)
+    }
+
+    func testFailedReplacementBackupPreservesBothOriginalImages() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let fm = FailingReceiptBackupMoveFileManager()
+        let repo = FileReceiptRepository(rootURL: store.root, fileManager: fm)
+        let original = try await repo.create(draft: makeReceipt(), fullImage: testImage(), thumbnail: testImage(.green))
+        let imageURL = store.root.appendingPathComponent("V2/Receipts/Images/\(original.imageFilename!)")
+        let thumbURL = store.root.appendingPathComponent("V2/Receipts/Thumbnails/\(original.thumbnailFilename!)")
+        let imageBefore = try Data(contentsOf: imageURL), thumbBefore = try Data(contentsOf: thumbURL)
+        fm.failThumbnailBackup = true
+        do { _ = try await repo.replaceImage(receiptID: original.id, image: testImage(.red)); XCTFail("Injected backup failure must fail replacement") }
+        catch { XCTAssertEqual(error as? ReceiptStorageError, .imageWrite) }
+        XCTAssertEqual(try Data(contentsOf: imageURL), imageBefore)
+        XCTAssertEqual(try Data(contentsOf: thumbURL), thumbBefore)
+        let saved = try await repo.receipt(id: original.id)
+        XCTAssertEqual(saved, original)
+    }
+
+    func testConcurrentCalculationRepositoriesPreserveEveryRecord() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let repositories = [FileCalculationRepository(rootURL: store.root), FileCalculationRepository(rootURL: store.root)]
+        let now = Date(timeIntervalSince1970: 100)
+        let records = (0..<40).map { index in SavedCalculationRecord(id: UUID(), recordType: .tipOnly, tipResult: nil, splitResult: nil, receiptID: nil, merchantName: nil, notes: "record \(index)", currencyConversion: nil, shareSummary: nil, createdAt: now, updatedAt: now) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (index, record) in records.enumerated() { group.addTask { try await repositories[index % 2].saveCalculation(record) } }
+            try await group.waitForAll()
+        }
+        let loaded = try await FileCalculationRepository(rootURL: store.root).fetchCalculations()
+        XCTAssertEqual(Set(loaded.map(\.id)), Set(records.map(\.id)))
+        XCTAssertEqual(loaded.count, records.count)
+    }
+
+    func testConcurrentCurrencyRepositoriesPreserveEveryPair() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let repositories = [FileCurrencyRateRepository(rootURL: store.root), FileCurrencyRateRepository(rootURL: store.root)]
+        let destinations = ["EUR", "CAD", "GBP", "JPY", "AUD", "CHF"]
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (index, code) in destinations.enumerated() {
+                let snapshot = CurrencyConversionSnapshot(sourceCurrencyCode: "USD", destinationCurrencyCode: code, billAmount: 1, tipAmount: 0, totalAmount: 1, convertedBillAmount: 2, convertedTipAmount: 0, convertedTotalAmount: 2, rate: 2, rateDate: nil, fetchedAt: Date(), usedCachedRate: false)
+                group.addTask { try await repositories[index % 2].saveRateSnapshot(snapshot) }
+            }
+            try await group.waitForAll()
+        }
+        let relaunched = FileCurrencyRateRepository(rootURL: store.root)
+        for code in destinations { let rate = try await relaunched.cachedRate(from: "USD", to: code); XCTAssertEqual(rate?.rate, 2) }
+    }
+
+    func testMigrationCompletionMarkerIsReadWithItsWrittenDateStrategy() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let first = await V2MigrationCoordinator(rootURL: store.root).migrateIfNeeded()
+        XCTAssertTrue(first.succeeded)
+        // Completed migrations must not retry a retained legacy source on every launch.
+        try Data("unreadable legacy data".utf8).write(to: store.root.appendingPathComponent("receipts.json"))
+        let second = await V2MigrationCoordinator(rootURL: store.root).migrateIfNeeded()
+        XCTAssertTrue(second.succeeded)
+        XCTAssertEqual(second.completedAt.timeIntervalSince1970, first.completedAt.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testFutureNotesSchemaIsNeverOverwrittenByEditingOrMigration() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let url = store.root.appendingPathComponent("Notes/notes.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let original = try encoder.encode(StoredDataEnvelope<SavedNote>(version: 99, records: []))
+        try original.write(to: url)
+        let note = SavedNote(id: UUID(), text: "Must not overwrite future notes", createdAt: Date(), updatedAt: Date())
+        do { _ = try await NoteStore(rootURL: store.root).upsert(note); XCTFail("Future schema must reject writes") }
+        catch { guard case V2PersistenceError.unsupportedSchema = error else { return XCTFail("Expected unsupported schema, got \(error)") } }
+        try Data("legacy note".utf8).write(to: store.root.appendingPathComponent("10 04 2024 14:34.txt"))
+        let migration = await V2MigrationCoordinator(rootURL: store.root).migrateIfNeeded()
+        XCTAssertFalse(migration.succeeded)
+        XCTAssertEqual(try Data(contentsOf: url), original)
+    }
+
+    @MainActor func testContradictoryHandoffStaysBlockedAfterParticipantModeAndPaidChanges() {
+        let context = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: 100, tax: 8, includedGratuityAmount: 18, additionalTipAmount: 2, total: 129, suggestedPeopleCount: 2)
+        let model = SplitBillViewModel(context: context)
+        model.addParticipant(); model.setMode(.percentage); model.markAllPaid(); model.recalculate()
+        XCTAssertEqual(model.session.total, 129)
+        XCTAssertNil(model.result); XCTAssertFalse(model.canSave); XCTAssertFalse(model.canShare)
+        XCTAssertFalse(model.session.participants.contains { $0.isPaid })
+        model.updateBillInputs(subtotalText: "101", taxText: "8", tipText: "20")
+        XCTAssertEqual(model.result?.originalTotal, 129)
+    }
+
+    @MainActor func testAfterTaxTipWithoutSubtotalPreservesTaxExactlyOnceInSplit() throws {
+        var input = TipCalculationInput.defaults(); input.calculationBasis = .finalTotalAfterTax
+        input.finalTotal = 108; input.tax = 8; input.serviceQuality = .good
+        let tip = try TipRecommendationEngine().calculate(input: input)
+        let context = SplitCalculatorContext.tipResult(tip)
+        XCTAssertEqual(context.subtotal, 100)
+        let split = SplitBillViewModel(context: context)
+        XCTAssertEqual(split.result?.originalTotal, tip.finalTotal)
+        XCTAssertEqual(split.result?.roundedCollectedTotal, tip.finalTotal)
+    }
+
+    @MainActor func testFinancialParsersRejectNumericPrefixesAndInvalidGrouping() {
+        let locale = Locale(identifier: "en_US")
+        for text in ["12abc", "12.34.56", "1,23,456", "NaN", "-12", "12%"] {
+            XCTAssertNil(LocalizedDecimalParser.parse(text, locale: locale), text)
+            XCTAssertNil(BillSummaryParser.parseRequired(text, locale: locale), text)
+            XCTAssertNil(CurrencyConverterViewModel.parseAmount(text, locale: locale), text)
+        }
+        XCTAssertEqual(LocalizedDecimalParser.parse("1,234.56", locale: locale), Decimal(string: "1234.56"))
+    }
+
+    @MainActor func testInvalidReceiptAmountCannotDisappearIntoSavedMetadata() async {
+        let model = ReceiptScannerViewModel(calculationRepository: IdentityCalculationRepositoryForCoverage())
+        model.startManualEntry(); model.draft?.subtotalText = "20"; model.draft?.taxText = "bad"
+        XCTAssertTrue(model.hasUnreviewedFinancialCharges)
+        let saved = await model.saveReceipt(); XCTAssertNil(saved)
+        model.continueToAssistant(); XCTAssertNil(model.pendingTipInput)
+    }
+
+    func testLegacyChargeAliasesRequireReviewAndNegativeConfirmedGratuityIsRejected() {
+        for kind: ReceiptChargeKind in [.includedMandatoryCharge, .suggestedTip, .unknown] {
+            var receipt = makeReceipt()
+            receipt.detectedCharges = [DetectedReceiptCharge(label: "Legacy charge", amount: 5, kind: kind, confidence: 1)]
+            XCTAssertFalse(ReceiptFinancialReviewValidator().review(receipt).isReadyForFinancialUse)
+        }
+        var receipt = makeReceipt(); receipt.financialReviewVersion = ReceiptFinancialReviewValidator.currentVersion
+        receipt.detectedCharges = [DetectedReceiptCharge(label: "Invalid gratuity", amount: -5, kind: .includedGratuity, confidence: 1, userClassification: .includedGratuity, isIncludedInReceiptTotal: true)]
+        XCTAssertFalse(ReceiptFinancialReviewValidator().review(receipt).isReadyForFinancialUse)
+    }
+
+    @MainActor func testInvalidCustomAmountCannotRestorePreviousValidSplit() {
+        let model = SplitBillViewModel()
+        model.updateBillInputs(subtotalText: "12", taxText: "", tipText: "")
+        model.setMode(.customAmount); model.session.participants[0].customAmount = 12; model.recalculate()
+        XCTAssertNotNil(model.result)
+        model.session.participants[0].customAmount = .nan; model.recalculate()
+        XCTAssertNil(model.result); XCTAssertFalse(model.canSave); XCTAssertFalse(model.canShare)
+    }
+
+    @MainActor func testConcurrentPreferenceChangesComposeInsteadOfOverwritingEachOther() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let environment = AppEnvironment(rootURL: store.root, userDefaults: store.defaults)
+        await environment.prepare()
+        let first = Task { @MainActor in try await environment.updatePreferences { $0.homeCurrencyCode = "CAD" } }
+        let second = Task { @MainActor in try await environment.updatePreferences { $0.defaultPeopleCount = 4 } }
+        try await first.value; try await second.value
+        XCTAssertEqual(environment.preferences.homeCurrencyCode, "CAD")
+        XCTAssertEqual(environment.preferences.defaultPeopleCount, 4)
+        let persisted = try await FileUserPreferencesRepository(rootURL: store.root).loadPreferences()
+        XCTAssertEqual(persisted, environment.preferences)
+    }
+
+    @MainActor func testNoteSaveFailureIsReportedWithoutClaimingSuccess() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let unusableRoot = store.root.appendingPathComponent("file-not-directory")
+        try Data([1]).write(to: unusableRoot)
+        let model = NotePadViewModel(store: NoteStore(rootURL: unusableRoot))
+        let saved = await model.save(note: nil, text: "Keep this unsaved text")
+        XCTAssertFalse(saved); XCTAssertNotNil(model.errorMessage); XCTAssertTrue(model.notes.isEmpty)
+    }
+
+    @MainActor func testMalformedOptionalGuidedTaxBlocksCalculation() {
+        let model = GuidedTipAssistantViewModel(repository: IdentityCalculationRepositoryForCoverage())
+        model.input.subtotal = 100
+        model.input.tax = LocalizedDecimalParser.parseOptionalInput("8bad")
+        model.calculate()
+        XCTAssertNil(model.result); XCTAssertNotNil(model.validationMessage)
+        model.input.tax = LocalizedDecimalParser.parseOptionalInput("8")
+        model.calculate()
+        XCTAssertEqual(model.result?.finalTotal, 126)
+    }
+
+    @MainActor func testUnsupportedReceiptCurrencyNeverConvertsAsUSD() {
+        let context = CurrencyConversionContext(sourceCurrencyCode: "BAD", values: [ConvertibleAmount(id: "total", label: "Total", amount: 20)], sourceRecordID: nil)
+        let model = CurrencyConverterViewModel(context: context)
+        XCTAssertEqual(model.sourceCurrency.code, "BAD")
+        model.convert()
+        XCTAssertNil(model.result)
+        XCTAssertEqual(model.state, .failure(CurrencyConverterError.unsupportedCurrency.localizedDescription))
+    }
+
+    func testConfirmedIncludedGratuityRequiresAValueAndCannotLowerReceiptTotal() throws {
+        var input = TipCalculationInput.defaults(); input.subtotal = 100; input.tax = 8; input.gratuityStatus = .yes
+        XCTAssertThrowsError(try TipRecommendationEngine().calculate(input: input))
+        input.includedGratuityEntryMode = .amount
+        XCTAssertThrowsError(try TipRecommendationEngine().calculate(input: input))
+        input.includedGratuityAmount = 20; input.finalTotal = 108
+        XCTAssertThrowsError(try TipRecommendationEngine().calculate(input: input))
+        input.finalTotal = 128
+        let result = try TipRecommendationEngine().calculate(input: input)
+        XCTAssertEqual(result.includedGratuityAmount, 20); XCTAssertEqual(result.finalTotal, 128)
+        XCTAssertEqual(result.suggestedAdditionalTip, 0)
+    }
+
+    func testConcurrentNoteStoresPreserveEveryNote() async throws {
+        let store = try TemporaryTestStore(#function); defer { store.remove() }
+        let stores = [NoteStore(rootURL: store.root), NoteStore(rootURL: store.root)]
+        let now = Date(timeIntervalSince1970: 100)
+        let notes = (0..<20).map { SavedNote(id: UUID(), text: "note \($0)", createdAt: now, updatedAt: now) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (index, note) in notes.enumerated() { group.addTask { _ = try await stores[index % 2].upsert(note) } }
+            try await group.waitForAll()
+        }
+        let loaded = try await NoteStore(rootURL: store.root).loadNotes()
+        XCTAssertEqual(Set(loaded.map(\.id)), Set(notes.map(\.id)))
+        XCTAssertEqual(loaded.count, notes.count)
+    }
+
+    private func makeReceipt() -> ReceiptRecord {
+        ReceiptRecord(id: UUID(), merchantName: "Hardening fixture", receiptDate: nil, subtotal: 20, tax: 2, total: 22, detectedCharges: [], imageFilename: nil, thumbnailFilename: nil, notes: "", createdAt: Date(timeIntervalSince1970: 100), updatedAt: Date(timeIntervalSince1970: 100))
+    }
+}
+
+private actor CancellationIgnoringOCR: ReceiptTextRecognizing {
+    private var continuation: CheckedContinuation<RecognizedReceiptText, Never>?
+    private(set) var started = false
+    private var finished = false
+    private let text = RecognizedReceiptText(observations: [], fullText: "Cancelled scan")
+    func recognizeText(in image: CGImage) async throws -> RecognizedReceiptText {
+        started = true
+        if finished { return text }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func finish() {
+        finished = true
+        continuation?.resume(returning: text); continuation = nil
+    }
+}
+
+final class ScannerCancellationHardeningTests: XCTestCase {
+    @MainActor func testCancelledOCRCannotReplaceExistingDraftEvenWhenRecognizerIgnoresCancellation() async throws {
+        let recognizer = CancellationIgnoringOCR()
+        let model = ReceiptScannerViewModel(recognizer: recognizer, calculationRepository: IdentityCalculationRepositoryForCoverage())
+        model.startManualEntry(); model.draft?.merchantName = "Keep this draft"; model.draft?.subtotalText = "20"
+        let originalID = model.draft?.id
+        model.process(testImage())
+        for _ in 0..<200 {
+            let hasStarted = await recognizer.started
+            if hasStarted { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let started = await recognizer.started
+        XCTAssertTrue(started, "OCR must actually start before cancellation is tested")
+        model.cancelProcessing(); await recognizer.finish()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(model.stage, .confirmation); XCTAssertEqual(model.draft?.id, originalID)
+        XCTAssertEqual(model.draft?.merchantName, "Keep this draft"); XCTAssertEqual(model.draft?.subtotalText, "20")
+        XCTAssertNil(model.draft?.sourceImage); XCTAssertNil(model.draft?.imageRevision)
+    }
+}
+
+private struct FixedRateForHardening: CurrencyRateProviding {
+    func rate(from: Currency, to: Currency) async throws -> (Decimal, Date?) { (2, nil) }
+}
+
+private actor SuspendedRateRepository: CurrencyRateRepository {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var saving = false
+    func cachedRate(from sourceCurrencyCode: String, to destinationCurrencyCode: String) async throws -> CurrencyConversionSnapshot? { nil }
+    func saveRateSnapshot(_ snapshot: CurrencyConversionSnapshot) async throws {
+        saving = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func finishSave() { continuation?.resume(); continuation = nil }
+}
+
+final class CurrencyRequestHardeningTests: XCTestCase {
+    @MainActor func testEditingAmountDuringCacheSaveCannotPublishStaleConversion() async throws {
+        let repository = SuspendedRateRepository()
+        let model = CurrencyConverterViewModel(service: FixedRateForHardening(), persistentRates: repository)
+        model.destinationCurrency = Currency.currency(for: "EUR"); model.amountText = "20"; model.convert()
+        for _ in 0..<200 {
+            let saving = await repository.saving
+            if saving { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let saving = await repository.saving
+        XCTAssertTrue(saving, "The test must reach the suspended cache save")
+        model.amountText = "30"; await repository.finishSave()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNil(model.result); XCTAssertEqual(model.state, .idle); XCTAssertTrue(model.multiValueLines.isEmpty)
     }
 }

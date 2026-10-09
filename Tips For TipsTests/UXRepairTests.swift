@@ -41,8 +41,7 @@ final class UXRepairTests: XCTestCase {
         XCTAssertFalse(model.canShare)
         XCTAssertFalse(model.canMarkAllPaid)
         XCTAssertFalse(model.canResetPaid)
-        model.session.subtotal = 12
-        model.recalculate()
+        model.updateBillInputs(subtotalText: "12", taxText: "", tipText: "")
         XCTAssertNotNil(model.result)
         XCTAssertTrue(model.canSave)
         XCTAssertTrue(model.canShare)

@@ -34,14 +34,18 @@ actor NoteStore {
     }
 
     func loadNotes() throws -> [SavedNote] {
+        LocalFileTransactions.lock.lock(); defer { LocalFileTransactions.lock.unlock() }
         guard fileManager.fileExists(atPath: notesURL.path) else { return [] }
         do {
             let envelope = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL))
+            guard envelope.version == 1 else { throw V2PersistenceError.unsupportedSchema(found: envelope.version, supported: 1) }
             return sort(envelope.records)
-        } catch { throw NoteStorageError.load }
+        } catch let error as V2PersistenceError { throw error }
+        catch { throw NoteStorageError.load }
     }
 
     func upsert(_ note: SavedNote) throws -> [SavedNote] {
+        LocalFileTransactions.lock.lock(); defer { LocalFileTransactions.lock.unlock() }
         var notes = try loadNotes()
         if let index = notes.firstIndex(where: { $0.id == note.id }) { notes[index] = note } else { notes.append(note) }
         try save(notes)
@@ -49,6 +53,7 @@ actor NoteStore {
     }
 
     func delete(_ note: SavedNote) throws -> [SavedNote] {
+        LocalFileTransactions.lock.lock(); defer { LocalFileTransactions.lock.unlock() }
         var notes = try loadNotes()
         notes.removeAll { $0.id == note.id }
         try save(notes)
@@ -74,7 +79,10 @@ final class NotePadViewModel: ObservableObject {
     private let store: NoteStore
     init(store: NoteStore = NoteStore()) { self.store = store }
     func load() { Task { do { notes = try await store.loadNotes() } catch { errorMessage = error.localizedDescription } } }
-    func save(note: SavedNote?, text: String) { Task { do { let now = Date(); let record = SavedNote(id: note?.id ?? UUID(), text: text, createdAt: note?.createdAt ?? now, updatedAt: now); notes = try await store.upsert(record) } catch { errorMessage = error.localizedDescription } } }
+    func save(note: SavedNote?, text: String) async -> Bool {
+        do { let now = Date(); let record = SavedNote(id: note?.id ?? UUID(), text: text, createdAt: note?.createdAt ?? now, updatedAt: now); notes = try await store.upsert(record); errorMessage = nil; return true }
+        catch { errorMessage = error.localizedDescription; return false }
+    }
     func delete(_ note: SavedNote) { Task { do { notes = try await store.delete(note) } catch { errorMessage = error.localizedDescription } } }
 }
 
@@ -98,7 +106,7 @@ struct NotePad: View {
         .navigationTitle("Note Pad")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { viewModel.load() }
-        .sheet(item: $editorMode) { mode in NewNoteView(note: mode.note, onSave: { viewModel.save(note: mode.note, text: $0) }) }
+        .sheet(item: $editorMode) { mode in NewNoteView(note: mode.note, onSave: { await viewModel.save(note: mode.note, text: $0) }) }
         .alert("Notes", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { if !$0 { viewModel.errorMessage = nil } })) { Button("OK", role: .cancel) {} } message: { Text(viewModel.errorMessage ?? "") }
     }
 }
@@ -108,20 +116,33 @@ enum NoteEditorMode: Identifiable { case create, edit(SavedNote); var id: String
 struct NewNoteView: View {
     @Environment(\.dismiss) private var dismiss
     let note: SavedNote?
-    let onSave: (String) -> Void
+    let onSave: (String) async -> Bool
     @State private var text: String
     @State private var showUnsavedAlert = false
+    @State private var isSaving = false
+    @State private var saveError: String?
     private let originalText: String
 
-    init(note: SavedNote?, onSave: @escaping (String) -> Void) { self.note = note; self.onSave = onSave; self.originalText = note?.text ?? ""; _text = State(initialValue: note?.text ?? "") }
+    init(note: SavedNote?, onSave: @escaping (String) async -> Bool) { self.note = note; self.onSave = onSave; self.originalText = note?.text ?? ""; _text = State(initialValue: note?.text ?? "") }
     var hasChanges: Bool { text != originalText }
 
     var body: some View {
         NavigationStack {
-            AppScreen { VStack(spacing: 16) { TextEditor(text: $text).appFont(.body).foregroundStyle(AppTheme.text).scrollContentBackground(.hidden).padding(8).background(AppTheme.surface).clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityLabel("Note text"); PrimaryButton(title: "Save", isDisabled: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { onSave(text); dismiss() } }.padding(20) }
+            AppScreen { VStack(spacing: 16) { TextEditor(text: $text).appFont(.body).foregroundStyle(AppTheme.text).scrollContentBackground(.hidden).padding(8).background(AppTheme.surface).clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityLabel("Note text").disabled(isSaving); if let saveError { InlineErrorView(message: saveError) }; PrimaryButton(title: isSaving ? "Saving…" : "Save", isDisabled: isSaving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { saveAndDismiss() } }.padding(20) }
             .navigationTitle(note == nil ? "New Note" : "Edit Note")
-            .toolbar { Button("Cancel") { hasChanges ? (showUnsavedAlert = true) : dismiss() } }
-            .alert("Unsaved Changes", isPresented: $showUnsavedAlert) { Button("Save") { onSave(text); dismiss() }; Button("Discard Changes", role: .destructive) { dismiss() }; Button("Keep Editing", role: .cancel) {} } message: { Text("Would you like to save your changes before closing?") }
+            .toolbar { Button("Cancel") { hasChanges ? (showUnsavedAlert = true) : dismiss() }.disabled(isSaving) }
+            .alert("Unsaved Changes", isPresented: $showUnsavedAlert) { Button("Save") { saveAndDismiss() }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty); Button("Discard Changes", role: .destructive) { dismiss() }; Button("Keep Editing", role: .cancel) {} } message: { Text("Would you like to save your changes before closing?") }
+        }
+        .interactiveDismissDisabled(hasChanges || isSaving)
+    }
+
+    private func saveAndDismiss() {
+        guard !isSaving else { return }
+        isSaving = true
+        Task {
+            if await onSave(text) { dismiss() }
+            else { saveError = "Unable to save this note. Your text is still here; try again." }
+            isSaving = false
         }
     }
 }

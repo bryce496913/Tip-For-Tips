@@ -16,7 +16,9 @@ struct Currency: Identifiable, Hashable {
         .init(code: "USD", name: "US Dollar", symbol: "$", flag: "🇺🇸"), .init(code: "EUR", name: "Euro", symbol: "€", flag: "🇪🇺"), .init(code: "GBP", name: "British Pound", symbol: "£", flag: "🇬🇧"), .init(code: "JPY", name: "Japanese Yen", symbol: "¥", flag: "🇯🇵"), .init(code: "AUD", name: "Australian Dollar", symbol: "$", flag: "🇦🇺"), .init(code: "CAD", name: "Canadian Dollar", symbol: "$", flag: "🇨🇦"), .init(code: "CHF", name: "Swiss Franc", symbol: "CHF", flag: "🇨🇭"), .init(code: "CNY", name: "Chinese Yuan", symbol: "¥", flag: "🇨🇳"), .init(code: "INR", name: "Indian Rupee", symbol: "₹", flag: "🇮🇳"), .init(code: "MXN", name: "Mexican Peso", symbol: "$", flag: "🇲🇽"), .init(code: "BRL", name: "Brazilian Real", symbol: "R$", flag: "🇧🇷"), .init(code: "KRW", name: "South Korean Won", symbol: "₩", flag: "🇰🇷"), .init(code: "NZD", name: "New Zealand Dollar", symbol: "$", flag: "🇳🇿"), .init(code: "SEK", name: "Swedish Krona", symbol: "kr", flag: "🇸🇪"), .init(code: "NOK", name: "Norwegian Krone", symbol: "kr", flag: "🇳🇴"), .init(code: "SGD", name: "Singapore Dollar", symbol: "$", flag: "🇸🇬"), .init(code: "HKD", name: "Hong Kong Dollar", symbol: "$", flag: "🇭🇰"), .init(code: "ZAR", name: "South African Rand", symbol: "R", flag: "🇿🇦")
     ]
 
-    static func currency(for code: String) -> Currency { supported.first { $0.code == code } ?? supported[0] }
+    static func currency(for code: String) -> Currency {
+        supported.first { $0.code == code } ?? Currency(code: code, name: Locale.current.localizedString(forCurrencyCode: code) ?? "Unsupported currency", symbol: code, flag: nil)
+    }
 }
 
 enum FrankfurterSupportedCurrencies { static let codes: Set<String> = ["AUD","BGN","BRL","CAD","CHF","CNY","CZK","DKK","EUR","GBP","HKD","HUF","IDR","ILS","INR","ISK","JPY","KRW","MXN","MYR","NOK","NZD","PHP","PLN","RON","SEK","SGD","THB","TRY","USD","ZAR"] }
@@ -94,18 +96,14 @@ final class CurrencyConverterViewModel: ObservableObject {
     private var activeRequestID = UUID()
     private var cache: [String: CachedExchangeRate] = [:]
 
-    init(service: CurrencyRateProviding = ExchangeRateService(), context: CurrencyConversionContext? = nil, preferences: UserPreferences = .defaults, persistentRates: CurrencyRateRepository = FileCurrencyRateRepository()) { self.service = service; self.persistentRates = persistentRates; if FrankfurterSupportedCurrencies.codes.contains(preferences.homeCurrencyCode) { destinationCurrency = Currency.currency(for: preferences.homeCurrencyCode) }; if let context { sourceCurrency = Currency.currency(for: context.sourceCurrencyCode); contextValues = context.values; amountText = context.values.first.map { "\($0.amount)" } ?? "" } }
+    init(service: CurrencyRateProviding = ExchangeRateService(), context: CurrencyConversionContext? = nil, preferences: UserPreferences = .defaults, persistentRates: CurrencyRateRepository = FileCurrencyRateRepository()) { self.service = service; self.persistentRates = persistentRates; destinationCurrency = Currency.currency(for: preferences.homeCurrencyCode); if let context { sourceCurrency = Currency.currency(for: context.sourceCurrencyCode); contextValues = context.values; amountText = context.values.first.map { "\($0.amount)" } ?? "" } }
     var parsedAmount: Decimal? { Self.parseAmount(amountText) }
     var canConvert: Bool { if case .loading = state { return false }; guard let amount = parsedAmount else { return false }; return amount > 0 }
 
     static func parseAmount(_ text: String, locale: Locale = .current) -> Decimal? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains("-") else { return nil }
-        let formatter = NumberFormatter(); formatter.locale = locale; formatter.numberStyle = .decimal; formatter.generatesDecimalNumbers = true
-        if let decimal = formatter.number(from: trimmed) as? NSDecimalNumber, decimal.decimalValue >= 0 { return decimal.decimalValue }
-        let fallback = trimmed.replacingOccurrences(of: locale.decimalSeparator ?? ".", with: ".")
-        guard let value = Decimal(string: fallback), value >= 0 else { return nil }
-        return value
+        return LocalizedDecimalParser.parse(trimmed, locale: locale)
     }
 
     func swapCurrencies() { let old = sourceCurrency; sourceCurrency = destinationCurrency; destinationCurrency = old; invalidateConversionResult() }
@@ -142,6 +140,7 @@ final class CurrencyConverterViewModel: ObservableObject {
                     let snapshot = CurrencyConversionSnapshot(sourceCurrencyCode: from.code, destinationCurrencyCode: to.code, billAmount: amount, tipAmount: 0, totalAmount: amount, convertedBillAmount: amount * rate, convertedTipAmount: 0, convertedTotalAmount: amount * rate, rate: rate, rateDate: rateDate, fetchedAt: fetchedAt, usedCachedRate: false)
                     try? await persistentRates.saveRateSnapshot(snapshot)
                 }
+                guard !Task.isCancelled, requestID == activeRequestID, amountText == amountSnapshot, sourceCurrency == from, destinationCurrency == to else { return }
                 let values = contextValues.isEmpty ? [ConvertibleAmount(id: "amount", label: "Amount", amount: amount)] : contextValues
                 multiValueLines = values.map { MultiValueConversionLine(id: $0.id, label: $0.label, sourceAmount: $0.amount, convertedAmount: $0.amount * rate) }
                 result = ConversionResult(enteredAmount: amount, convertedAmount: amount * rate, rate: rate, from: from, to: to, rateDate: rateDate, fetchedAt: fetchedAt, isCached: cached)

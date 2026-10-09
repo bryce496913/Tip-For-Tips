@@ -153,14 +153,18 @@ private struct CurrencySelectionSheet: View {
         NavigationStack {
             AppScreen {
                 List(filtered) { currency in
-                    Button { selection = currency; dismiss() } label: {
-                        HStack {
+                    HStack {
+                        Button { selection = currency; dismiss() } label: {
+                            HStack {
                             Text(currency.flag ?? "").accessibilityHidden(true)
                             VStack(alignment: .leading) { Text(currency.code).appFont(.headline); Text(currency.name).appFont(.body).foregroundStyle(AppTheme.secondaryText) }
                             Spacer()
-                            Button { toggleFavorite(currency) } label: { Image(systemName: isFavorite(currency) ? "star.fill" : "star") }.accessibilityLabel(isFavorite(currency) ? "Unfavorite currency" : "Favorite currency")
                             if currency == selection { Image(systemName: "checkmark.circle.fill").foregroundStyle(AppTheme.highlight) }
+                            }
                         }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("currency.select.\(currency.code)")
+                        Button { toggleFavorite(currency) } label: { Image(systemName: isFavorite(currency) ? "star.fill" : "star") }.buttonStyle(.borderless).accessibilityLabel(isFavorite(currency) ? "Unfavorite currency" : "Favorite currency").accessibilityIdentifier("currency.favorite.\(currency.code)")
                     }
                     .listRowBackground(AppTheme.surface)
                     .foregroundStyle(AppTheme.text)

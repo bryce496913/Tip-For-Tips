@@ -305,11 +305,7 @@ struct ReceiptRecord: Identifiable, Codable, Hashable {
 
     var displayName: String { merchantName?.isEmpty == false ? merchantName! : "Receipt" }
     var hasUnreviewedFinancialCharges: Bool {
-        detectedCharges.contains { charge in
-            [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge,
-             .administrativeFee, .suggestedGratuity, .deliveryFee].contains(charge.kind)
-                && (financialReviewVersion == nil || charge.userClassification == nil || charge.userClassification == .unreviewed)
-        }
+        !ReceiptFinancialReviewValidator().review(self).unreviewedChargeIDs.isEmpty
     }
 
     var convertibleAmounts: [ConvertibleAmount] {
@@ -351,7 +347,8 @@ struct SplitCalculatorContext: Hashable, Codable {
     static let manual = SplitCalculatorContext(sourceCalculationID: nil, receiptID: nil, currencyCode: "USD", subtotal: nil, tax: nil, includedGratuityAmount: nil, additionalTipAmount: nil, total: nil, suggestedPeopleCount: nil, handoffValidationMessage: nil)
 
     static func tipResult(_ result: TipCalculationResult, sourceCalculationID: UUID? = nil) -> SplitCalculatorContext {
-        SplitCalculatorContext(sourceCalculationID: sourceCalculationID, receiptID: nil, currencyCode: result.input.currencyCode, subtotal: result.input.subtotal ?? result.baseBillAmount, tax: result.input.tax, includedGratuityAmount: result.includedGratuityAmount, additionalTipAmount: result.suggestedAdditionalTip, total: result.finalTotal, suggestedPeopleCount: result.input.peopleCount, handoffValidationMessage: nil)
+        let subtotal = result.input.subtotal ?? (result.input.calculationBasis == .finalTotalAfterTax ? result.baseBillAmount - (result.input.tax ?? 0) : result.baseBillAmount)
+        return SplitCalculatorContext(sourceCalculationID: sourceCalculationID, receiptID: nil, currencyCode: result.input.currencyCode, subtotal: subtotal, tax: result.input.tax, includedGratuityAmount: result.includedGratuityAmount, additionalTipAmount: result.suggestedAdditionalTip, total: result.finalTotal, suggestedPeopleCount: result.input.peopleCount, handoffValidationMessage: nil)
     }
 
     static func receipt(_ receipt: ReceiptRecord) -> SplitCalculatorContext {
@@ -647,6 +644,7 @@ enum ReceiptFinancialWarning: Equatable, Sendable {
     case missingSubtotalForPercentage(UUID)
     case conflictingAmountAndPercentage(UUID)
     case unknownIncludedInTotal(UUID)
+    case invalidChargeValue(UUID)
 }
 
 struct ReceiptFinancialReviewValidator: Sendable {
@@ -656,10 +654,11 @@ struct ReceiptFinancialReviewValidator: Sendable {
         var invalid: [UUID] = []
         var warnings: [ReceiptFinancialWarning] = []
         for charge in receipt.detectedCharges {
-            let relevant = [.includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge, .administrativeFee, .suggestedGratuity, .deliveryFee, .unknownCharge].contains(charge.kind) || charge.source == .manual || charge.userClassification == .includedGratuity || charge.userClassification == .serviceChargeUnsure
+            let relevant = [.includedMandatoryCharge, .suggestedTip, .unknown, .includedGratuity, .automaticGratuity, .serviceCharge, .hospitalityCharge, .administrativeFee, .suggestedGratuity, .deliveryFee, .unknownCharge].contains(charge.kind) || charge.source == .manual || charge.userClassification == .includedGratuity || charge.userClassification == .serviceChargeUnsure
             guard relevant else { continue }
             if receipt.financialReviewVersion == nil || charge.userClassification == nil || charge.userClassification == .unreviewed { unreviewed.append(charge.id); warnings.append(.unreviewedCharge(charge.id)) }
             if charge.userClassification == .includedGratuity {
+                if [charge.amount, charge.percentage].compactMap({ $0 }).contains(where: { $0.isNaN || $0 < 0 }) { invalid.append(charge.id); warnings.append(.invalidChargeValue(charge.id)) }
                 if charge.amount == nil && charge.percentage == nil { invalid.append(charge.id); warnings.append(.missingChargeValue(charge.id)) }
                 if charge.percentage != nil && charge.amount == nil && receipt.subtotal == nil { invalid.append(charge.id); warnings.append(.missingSubtotalForPercentage(charge.id)) }
                 if let pct = charge.percentage, let amount = charge.amount, let subtotal = receipt.subtotal {

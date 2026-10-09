@@ -3,11 +3,18 @@ import XCTest
 final class UXRepairUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
+    private func revealButton(_ title: String, in app: XCUIApplication) -> XCUIElement {
+        let button = app.buttons[title]
+        for _ in 0..<12 where !button.isHittable { app.swipeUp() }
+        XCTAssertTrue(button.isHittable, "Expected \(title) to be reachable")
+        return button
+    }
+
     func testAdvancedSplitBillSummaryAndActionsAreVisible() throws {
         let app = XCUIApplication()
         app.launchArguments += ["-ui-testing"]
         app.launch()
-        app.buttons["Split a Bill"].tap()
+        revealButton("Split a Bill", in: app).tap()
         XCTAssertTrue(app.staticTexts["Bill Summary"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["Subtotal"].exists)
         XCTAssertTrue(app.staticTexts["Tax"].exists)
@@ -25,7 +32,7 @@ final class UXRepairUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments += ["-ui-testing"]
         app.launch()
-        app.buttons["Open Settings"].tap()
+        revealButton("Open Settings", in: app).tap()
         XCTAssertTrue(app.buttons["Home currency"].waitForExistence(timeout: 5))
         app.buttons["Home currency"].tap()
         XCTAssertTrue(app.navigationBars["Home Currency"].waitForExistence(timeout: 5))
