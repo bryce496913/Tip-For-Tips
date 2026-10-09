@@ -27,8 +27,11 @@ struct TipRecommendationEngine {
         guard let service = services.first(where: { $0.id == input.serviceID }) else { throw TipCalculationError.missingService }
         guard input.peopleCount > 0 else { throw TipCalculationError.invalidPeopleCount }
         try validateNonNegative(input)
+        try validateIncludedGratuity(input)
         let baseAmount = try calculationBaseAmount(input)
         let receiptTotal = currentReceiptTotal(input: input, baseAmount: baseAmount)
+        let minimumTotal = (input.subtotal ?? 0) + (input.tax ?? 0) + includedAmount(input: input, baseAmount: gratuityBaseAmount(input, calculationBase: baseAmount))
+        guard receiptTotal + Decimal(string: "0.01")! >= minimumTotal else { throw TipCalculationError.invalidReceiptTotal("The final total cannot be less than subtotal, tax, and confirmed included gratuity. Review the bill amounts.") }
 
         if service.id == "bar", input.bartenderTipMode == .perDrink {
             let amount = try fixedAmount(for: service, input: input, minimum: 1, standard: 2, maximum: 3)
@@ -76,7 +79,17 @@ struct TipRecommendationEngine {
         TipCalculationResult(id: UUID(), createdAt: now, input: input, recommendedPercentage: percentage, normalRange: range, service: service, baseBillAmount: base, customaryGuidance: guidance, includedGratuityAmount: included, suggestedAdditionalTip: additional, combinedGratuity: combined, recommendedTipAmount: additional, finalTotal: roundedCurrency(receiptTotal + additional), lowerAlternative: lower, higherAlternative: higher, explanation: explanation)
     }
 
-    private func validateNonNegative(_ input: TipCalculationInput) throws { for (name, value) in [("Subtotal", input.subtotal), ("Tax", input.tax), ("Final total", input.finalTotal), ("Included gratuity", input.includedGratuityAmount), ("Included gratuity percentage", input.includedGratuityPercentage)] { if let value, value < 0 { throw TipCalculationError.negativeAmount(name) } } }
+    private func validateNonNegative(_ input: TipCalculationInput) throws { for (name, value) in [("Subtotal", input.subtotal), ("Tax", input.tax), ("Final total", input.finalTotal), ("Included gratuity", input.includedGratuityAmount), ("Included gratuity percentage", input.includedGratuityPercentage)] { if let value, value.isNaN || value < 0 { throw TipCalculationError.negativeAmount(name) } } }
+    func validateIncludedGratuity(_ input: TipCalculationInput) throws {
+        guard input.gratuityStatus == .yes else { return }
+        let value: Decimal?
+        switch input.includedGratuityEntryMode {
+        case .amount: value = input.includedGratuityAmount
+        case .percentage: value = input.includedGratuityPercentage
+        case .unknown: value = nil
+        }
+        guard let value, !value.isNaN, value >= 0 else { throw TipCalculationError.invalidReceiptTotal("Enter the included gratuity amount or percentage, or choose Unsure before continuing.") }
+    }
     private func calculationBaseAmount(_ input: TipCalculationInput) throws -> Decimal {
         switch input.calculationBasis {
         case .subtotalBeforeTax:
@@ -133,7 +146,15 @@ struct TipRecommendationEngine {
     private func roundedCurrency(_ value: Decimal) -> Decimal { var value = value; var rounded = Decimal(); NSDecimalRound(&rounded, &value, 2, .plain); return rounded }
 }
 
-enum LocalizedDecimalParser { static func parse(_ text: String, locale: Locale = .current) -> Decimal? { let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.locale = locale; if let number = formatter.number(from: text) { return number.decimalValue }; let normalized = text.replacingOccurrences(of: ",", with: "."); return Decimal(string: normalized) } }
+enum LocalizedDecimalParser {
+    static func parse(_ text: String, locale: Locale = .current) -> Decimal? {
+        // NumberFormatter and Decimal(string:) can accept a numeric prefix of invalid text.
+        ReceiptAmountParser.parse(text, locale: locale, expectedCurrencyCode: nil)
+    }
+    static func parseOptionalInput(_ text: String, locale: Locale = .current) -> Decimal? {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : (parse(text, locale: locale) ?? .nan)
+    }
+}
 
 // MARK: - Split Calculation
 
@@ -145,7 +166,9 @@ enum SplitCalculationError: LocalizedError, Equatable {
 struct SplitCalculationEngine {
     func calculate(session: SplitSession, now: Date = Date()) throws -> SplitCalculationResult {
         guard !session.participants.isEmpty else { throw SplitCalculationError.noParticipants }
-        guard session.subtotal >= 0, session.tax >= 0, session.tipAmount >= 0, session.total >= 0 else { throw SplitCalculationError.invalidBill("Bill, tax, tip and total must be zero or positive.") }
+        guard Set(session.participants.map(\.id)).count == session.participants.count else { throw SplitCalculationError.invalidBill("Each participant must have a unique identity.") }
+        guard [session.subtotal, session.tax, session.tipAmount, session.total].allSatisfy({ !$0.isNaN && $0 >= 0 }) else { throw SplitCalculationError.invalidBill("Bill, tax, tip and total must be zero or positive.") }
+        guard [session.includedGratuityAmount, session.additionalTipAmount].allSatisfy({ !$0.isNaN && $0 >= 0 }) else { throw SplitCalculationError.invalidBill("Included gratuity and additional tip must be zero or positive.") }
         try require(session.tipAmount, equals: session.includedGratuityAmount + session.additionalTipAmount, message: "Combined gratuity must equal included gratuity plus additional tip.")
         let calculatedTotal = session.subtotal + session.tax + session.tipAmount
         try require(calculatedTotal, equals: session.total, message: "Final total must equal subtotal plus tax plus tip before splitting.")
@@ -157,19 +180,19 @@ struct SplitCalculationEngine {
         case .equal:
             bases = allocate(session.total - session.tax - session.tipAmount, among: session.participants.map(\.id))
         case .customAmount:
-            for p in session.participants { guard (p.customAmount ?? 0) >= 0 else { throw SplitCalculationError.negativeAmount("Custom amounts cannot be negative.") }; bases[p.id] = p.customAmount ?? 0 }
+            for p in session.participants { guard !(p.customAmount ?? 0).isNaN, (p.customAmount ?? 0) >= 0 else { throw SplitCalculationError.negativeAmount("Custom amounts cannot be negative.") }; bases[p.id] = p.customAmount ?? 0 }
             try require(sum(bases.values), equals: session.subtotal, message: "Custom amounts must equal the subtotal before tax and tip.")
         case .percentage:
             let percentTotal = session.participants.reduce(Decimal(0)) { $0 + ($1.percentage ?? 0) }
-            for p in session.participants { guard (p.percentage ?? 0) >= 0 else { throw SplitCalculationError.negativeAmount("Percentages cannot be negative.") }; bases[p.id] = session.subtotal * (p.percentage ?? 0) / 100 }
+            for p in session.participants { guard !(p.percentage ?? 0).isNaN, (p.percentage ?? 0) >= 0 else { throw SplitCalculationError.negativeAmount("Percentages cannot be negative.") }; bases[p.id] = session.subtotal * (p.percentage ?? 0) / 100 }
             try require(percentTotal, equals: 100, message: "Percentages must total 100%.")
         case .itemized:
             for item in session.items {
-                guard item.price >= 0 else { throw SplitCalculationError.negativeAmount("Item prices cannot be negative.") }
+                guard !item.price.isNaN, item.price >= 0 else { throw SplitCalculationError.negativeAmount("Item prices cannot be negative.") }
                 guard !item.assignments.isEmpty || item.price == 0 else { throw SplitCalculationError.unassignedItem("Assign \(item.name.isEmpty ? "each item" : item.name) to at least one participant.") }
                 let shareTotal = item.assignments.reduce(Decimal(0)) { $0 + $1.share }
                 guard shareTotal == 0 || absDecimal(shareTotal - 1) <= Decimal(string: "0.0001")! else { throw SplitCalculationError.invalidShare("Item shares must total 100%.") }
-                for a in item.assignments { guard ids.contains(a.participantID) else { throw SplitCalculationError.danglingParticipant }; guard a.share >= 0 else { throw SplitCalculationError.negativeAmount("Item shares cannot be negative.") }; let amount = item.price * a.share; bases[a.participantID, default: 0] += amount; itemBreakdowns[a.participantID, default: []].append(ParticipantItemBreakdown(id: UUID(), itemID: item.id, itemName: item.name.isEmpty ? "Item" : item.name, amount: amount)) }
+                for a in item.assignments { guard ids.contains(a.participantID) else { throw SplitCalculationError.danglingParticipant }; guard !a.share.isNaN, a.share >= 0 else { throw SplitCalculationError.negativeAmount("Item shares cannot be negative.") }; let amount = item.price * a.share; bases[a.participantID, default: 0] += amount; itemBreakdowns[a.participantID, default: []].append(ParticipantItemBreakdown(id: UUID(), itemID: item.id, itemName: item.name.isEmpty ? "Item" : item.name, amount: amount)) }
             }
             try require(sum(bases.values), equals: session.subtotal, message: "Item totals must match the receipt subtotal before continuing.")
         }
@@ -190,7 +213,7 @@ struct SplitCalculationEngine {
         }
         return SplitCalculationResult(id: UUID(), sessionID: session.id, session: session, participantResults: results, originalTotal: session.total, roundedCollectedTotal: collected, roundingDifference: round(collected - session.total), unallocatedAmount: round(session.subtotal - sum(bases.values)), createdAt: now)
     }
-    private func chargeAllocation(total: Decimal, mode: ChargeAllocationMode, participants: [SplitParticipant], bases: [UUID: Decimal], keyPath: KeyPath<SplitParticipant, Decimal?>, label: String) throws -> [UUID: Decimal] { switch mode { case .proportional: let weights = participants.map { ($0.id, bases[$0.id] ?? 0) }; return sum(weights.map(\.1)) == 0 && total > 0 ? allocate(total, among: participants.map(\.id)) : allocate(total, weights: weights); case .equal: return allocate(total, among: participants.map(\.id)); case .custom: let vals = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0[keyPath: keyPath] ?? 0) }); try require(sum(vals.values), equals: total, message: "Custom \(label) allocations must equal the full \(label) amount."); return vals } }
+    private func chargeAllocation(total: Decimal, mode: ChargeAllocationMode, participants: [SplitParticipant], bases: [UUID: Decimal], keyPath: KeyPath<SplitParticipant, Decimal?>, label: String) throws -> [UUID: Decimal] { switch mode { case .proportional: let weights = participants.map { ($0.id, bases[$0.id] ?? 0) }; return sum(weights.map(\.1)) == 0 && total > 0 ? allocate(total, among: participants.map(\.id)) : allocate(total, weights: weights); case .equal: return allocate(total, among: participants.map(\.id)); case .custom: let vals = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0[keyPath: keyPath] ?? 0) }); guard vals.values.allSatisfy({ !$0.isNaN && $0 >= 0 }) else { throw SplitCalculationError.negativeAmount("Custom \(label) allocations must be zero or positive.") }; try require(sum(vals.values), equals: total, message: "Custom \(label) allocations must equal the full \(label) amount."); return vals } }
     private func allocate(_ total: Decimal, among ids: [UUID]) -> [UUID: Decimal] { allocate(total, weights: ids.map { ($0, 1) }) }
     private func allocate(_ total: Decimal, weights: [(UUID, Decimal)]) -> [UUID: Decimal] { let totalCents = cents(total); let weightSum = sum(weights.map(\.1)); guard weightSum > 0, !weights.isEmpty else { return Dictionary(uniqueKeysWithValues: weights.map { ($0.0, 0) }) }; var result: [UUID: Int] = [:]; var remainders: [(UUID, Decimal)] = []; var used = 0; for (id,w) in weights { let exact = Decimal(totalCents) * w / weightSum; let floorCents = NSDecimalNumber(decimal: exact).rounding(accordingToBehavior: NSDecimalNumberHandler(roundingMode: .down, scale: 0, raiseOnExactness: false, raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false)).intValue; result[id] = floorCents; used += floorCents; remainders.append((id, exact - Decimal(floorCents))) }; for (id,_) in remainders.sorted(by: { $0.1 == $1.1 ? $0.0.uuidString < $1.0.uuidString : $0.1 > $1.1 }).prefix(max(0,totalCents-used)) { result[id, default: 0] += 1 }; return Dictionary(uniqueKeysWithValues: result.map { ($0.key, Decimal($0.value) / 100) }) }
     private func cents(_ d: Decimal) -> Int { NSDecimalNumber(decimal: round(d)).multiplying(byPowerOf10: 2).intValue }

@@ -50,7 +50,7 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
         let receipt = ReceiptRecord(id: UUID(), merchantName: "Fixture", receiptDate: nil, subtotal: 100, tax: 8, total: 128, detectedCharges: [charge], imageFilename: nil, thumbnailFilename: nil, notes: "", confirmationStatus: .needsReview, createdAt: Date(), updatedAt: Date())
         XCTAssertTrue(receipt.hasUnreviewedFinancialCharges)
         XCTAssertEqual(receipt.confirmedIncludedGratuity(), .amount(0))
-        XCTAssertEqual(receipt.tipCalculationInput().includedGratuityAmount, 0)
+        XCTAssertNil(receipt.tipCalculationInput().includedGratuityAmount)
     }
 
     func testTimestampedNoteFailureReportsExactSourceAndPreservesValidNote() async throws {
@@ -298,10 +298,12 @@ final class ReleaseBlockerRegressionTests: XCTestCase {
 
     func testPublicPlaceholderStringsRemovedFromProductionViews() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Tips For Tips")
-        let banned = ["coming next", "future phase", "placeholder", "deep link target", "V1 tools"]
+        let banned = ["coming next", "comes later", "future phase", "placeholder", "deep link target", "V1 tools"]
         for url in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil).filter({ $0.pathExtension == "swift" }) {
-            let text = try String(contentsOf: url).lowercased()
-            for phrase in banned { XCTAssertFalse(text.contains(phrase.lowercased()), "\(url.lastPathComponent) contains \(phrase)") }
+            let text = try String(contentsOf: url)
+            // Check displayed copy, not identifiers such as imagePlaceholderTitle.
+            let literals = text.matches(#""(?:\\.|[^"\\])*""#).joined(separator: " ").lowercased()
+            for phrase in banned { XCTAssertFalse(literals.contains(phrase.lowercased()), "\(url.lastPathComponent) contains \(phrase)") }
         }
     }
 }

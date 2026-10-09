@@ -125,7 +125,7 @@ struct ReceiptDraft: Identifiable { let id: UUID; var sourceImage: UIImage?; var
 
 @MainActor final class ReceiptScannerViewModel: ObservableObject {
     @Published var stage: ReceiptScanStage = .sourceSelection; @Published var presentation: ReceiptScannerPresentation?; @Published var selectedPhoto: PhotosPickerItem?; @Published var draft: ReceiptDraft?; @Published private(set) var imageState: ReceiptDraftImageState = .noImage; @Published var message: String?; @Published var savedReceiptID: UUID?; @Published var pendingTipInput: TipCalculationInput?; @Published var pendingTipReceiptID: UUID?; @Published var showUnsavedChanges = false; @Published var isSaving = false
-    let context: ReceiptScannerContext; let preferences: UserPreferences; private let recognizer: ReceiptTextRecognizing; private let parser: ReceiptFieldParsing; let repository: ReceiptRepository; let calculationRepository: CalculationRepository; private var processingTask: Task<Void, Never>?; private(set) var savedDraftFingerprint: ReceiptDraftFingerprint?
+    let context: ReceiptScannerContext; let preferences: UserPreferences; private let recognizer: ReceiptTextRecognizing; private let parser: ReceiptFieldParsing; let repository: ReceiptRepository; let calculationRepository: CalculationRepository; private var processingTask: Task<Void, Never>?; private var photoLoadingTask: Task<Void, Never>?; private var processingRequestID = UUID(); private(set) var savedDraftFingerprint: ReceiptDraftFingerprint?
     var hasUnsavedChanges: Bool { guard let draft, draft.hasMeaningfulContent else { return false }; return draft.fingerprint != savedDraftFingerprint }
     static func initialClassification(for kind: ReceiptChargeKind) -> ReceiptChargeClassification {
         switch kind {
@@ -163,10 +163,49 @@ struct ReceiptDraft: Identifiable { let id: UUID; var sourceImage: UIImage?; var
     private func returnFromImageAttempt() { stage = draft == nil ? .sourceSelection : .confirmation }
     func cameraCancelled() { presentation = nil; returnFromImageAttempt() }
     func captured(_ image: UIImage) { presentation = nil; process(image) }
-    func photoSelectionChanged(_ item: PhotosPickerItem?) { guard let item else { returnFromImageAttempt(); return }; stage = .processing; Task { do { guard let data = try await item.loadTransferable(type: Data.self), let image = await Task.detached(priority: .userInitiated, operation: { UIImage(data: data) }).value else { throw ReceiptScannerError.imageLoadFailed }; process(image) } catch { imageLoadingFailed() } } }
+    func photoSelectionChanged(_ item: PhotosPickerItem?) {
+        guard let item else { cancelProcessing(); return }
+        photoLoadingTask?.cancel(); processingTask?.cancel()
+        let requestID = UUID(); processingRequestID = requestID
+        stage = .processing
+        photoLoadingTask = Task {
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self), let image = await Task.detached(priority: .userInitiated, operation: { UIImage(data: data) }).value else { throw ReceiptScannerError.imageLoadFailed }
+                guard !Task.isCancelled, processingRequestID == requestID else { return }
+                process(image)
+            } catch {
+                guard !Task.isCancelled, processingRequestID == requestID else { return }
+                imageLoadingFailed()
+            }
+        }
+    }
     func imageLoadingFailed() { message = ReceiptScannerError.imageLoadFailed.localizedDescription; returnFromImageAttempt() }
-    func process(_ image: UIImage) { processingTask?.cancel(); stage = .processing; processingTask = Task { do { let processed = try await ReceiptImageProcessor.process(image); let recognized = try await recognizer.recognizeText(in: processed.ocrImage); let detection = parser.parse(recognizedText: recognized, locale: .current); makeDraft(image: image, processed: processed, recognized: recognized, detection: detection) } catch is CancellationError { returnFromImageAttempt() } catch { let processed = try? await ReceiptImageProcessor.process(image); if let processed { var preserved = draft ?? ReceiptDraft(id: UUID()); preserved.sourceImage = image; preserved.processed = processed; preserved.imageRevision = UUID(); draft = preserved; imageState = .replacementSelected }; message = "Receipt text could not be read. Your existing receipt details were kept. Review the new image and enter any missing values manually."; returnFromImageAttempt() } } }
-    func cancelProcessing() { processingTask?.cancel(); returnFromImageAttempt() }
+    func process(_ image: UIImage) {
+        processingTask?.cancel(); photoLoadingTask?.cancel()
+        let requestID = UUID(); processingRequestID = requestID
+        stage = .processing
+        processingTask = Task {
+            do {
+                let processed = try await ReceiptImageProcessor.process(image)
+                try Task.checkCancellation()
+                let recognized = try await recognizer.recognizeText(in: processed.ocrImage)
+                try Task.checkCancellation()
+                guard processingRequestID == requestID else { return }
+                let detection = parser.parse(recognizedText: recognized, locale: .current)
+                makeDraft(image: image, processed: processed, recognized: recognized, detection: detection)
+            } catch is CancellationError {
+                guard processingRequestID == requestID else { return }
+                returnFromImageAttempt()
+            } catch {
+                let processed = try? await ReceiptImageProcessor.process(image)
+                guard !Task.isCancelled, processingRequestID == requestID else { return }
+                if let processed { var preserved = draft ?? ReceiptDraft(id: UUID()); preserved.sourceImage = image; preserved.processed = processed; preserved.imageRevision = UUID(); draft = preserved; imageState = .replacementSelected }
+                message = "Receipt text could not be read. Your existing receipt details were kept. Review the new image and enter any missing values manually."
+                returnFromImageAttempt()
+            }
+        }
+    }
+    func cancelProcessing() { processingRequestID = UUID(); processingTask?.cancel(); photoLoadingTask?.cancel(); returnFromImageAttempt() }
     func startManualEntry() { if draft == nil { var value = ReceiptDraft(id: UUID(), sourceImage: nil, processed: nil, recognizedText: nil, warnings: []); value.currencyCode = preferences.homeCurrencyCode; draft = value; imageState = .noImage }; stage = .confirmation }
     private func makeDraft(image: UIImage, processed: ProcessedReceiptImage, recognized: RecognizedReceiptText, detection: ReceiptDetectionResult) {
         // Image OCR is advisory. Preserve edits already made by the user, and only fill
@@ -183,10 +222,15 @@ struct ReceiptDraft: Identifiable { let id: UUID; var sourceImage: UIImage?; var
         if d.recognizedText == nil { d.recognizedText = recognized.fullText }
         d.warnings = detection.warnings; draft = d; stage = .confirmation
     }
-    var hasUnreviewedFinancialCharges: Bool { guard let draft else { return false }; return !ReceiptFinancialReviewValidator().review(record(from: draft, id: draft.id)).isReadyForFinancialUse }
+    var hasUnreviewedFinancialCharges: Bool {
+        guard let draft else { return false }
+        let texts = [draft.subtotalText, draft.taxText, draft.totalText] + draft.detectedCharges.flatMap { [$0.amountText, $0.percentageText] }
+        if texts.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && ReceiptAmountParser.parse($0) == nil }) { return true }
+        return !ReceiptFinancialReviewValidator().review(record(from: draft, id: draft.id)).isReadyForFinancialUse
+    }
     private func requireChargeReview() -> Bool {
         guard hasUnreviewedFinancialCharges else { return true }
-        message = "Review the detected gratuity and service-charge items before continuing."
+        message = "Enter valid amounts and review the gratuity and service-charge items before continuing."
         stage = .confirmation
         return false
     }

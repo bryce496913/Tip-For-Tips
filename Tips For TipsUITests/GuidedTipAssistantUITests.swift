@@ -65,7 +65,7 @@ final class ModernizedUXUITests: XCTestCase {
         app.buttons["Calculate a Tip"].tap()
         XCTAssertTrue(app.staticTexts["What service did you receive?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["Search services"].isHittable)
-        XCTAssertTrue(app.buttons["Continue"].isHittable)
+        XCTAssertTrue(revealButton("Continue", in: app).isHittable)
     }
 
     func testUnifiedReceiptHubAndScannerNavigation() {
@@ -109,16 +109,31 @@ final class ModernizedUXUITests: XCTestCase {
 
     func testEqualAndItemizedSplitEntryPointsExist() {
         let app = launchedApp()
-        app.buttons["Split a Bill"].tap()
+        revealButton("Split a Bill", in: app).tap()
         XCTAssertTrue(app.staticTexts["Bill Summary"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Equal"].exists)
-        XCTAssertTrue(app.buttons["Itemized"].exists)
+        XCTAssertTrue(app.buttons["Equal Split mode"].exists)
+        XCTAssertTrue(app.buttons["Itemized mode"].exists)
     }
 
     func testCurrencyConverterTippingGuideSettingsAndEmptyStatesExist() {
         let app = launchedApp()
-        app.buttons["Convert Currency"].tap()
+        revealButton("Convert Currency", in: app).tap()
         XCTAssertTrue(app.staticTexts["Currency Converter"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Convert"].exists)
+    }
+
+    func testCurrencyFavoriteDoesNotSelectCurrencyOrDismissPicker() {
+        let app = launchedApp()
+        revealButton("Convert Currency", in: app).tap()
+        app.buttons["From currency"].tap()
+        XCTAssertTrue(app.navigationBars["Source Currency"].waitForExistence(timeout: 5))
+        app.searchFields.firstMatch.tap()
+        app.searchFields.firstMatch.typeText("EUR")
+        let favorite = app.buttons["currency.favorite.EUR"]
+        XCTAssertTrue(favorite.waitForExistence(timeout: 5))
+        favorite.tap()
+        XCTAssertTrue(app.navigationBars["Source Currency"].exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertEqual(app.buttons["From currency"].value as? String, "USD, US Dollar")
     }
 }

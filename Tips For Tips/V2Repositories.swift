@@ -89,6 +89,9 @@ struct QuarantineManifest: Codable, Hashable {
 }
 
 actor CodableFileStore<Record: Codable & Identifiable> where Record.ID: Hashable {
+    // Serialize complete read/modify/write transactions across store instances.
+    // The critical sections are synchronous and never suspend while holding the lock.
+    private static var transactionLock: NSRecursiveLock { LocalFileTransactions.lock }
     private let fileURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -103,6 +106,7 @@ actor CodableFileStore<Record: Codable & Identifiable> where Record.ID: Hashable
     }
 
     func load(version: Int) throws -> [Record] {
+        Self.transactionLock.lock(); defer { Self.transactionLock.unlock() }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         do {
             let envelope = try decoder.decode(StoredDataEnvelope<Record>.self, from: Data(contentsOf: fileURL))
@@ -116,13 +120,23 @@ actor CodableFileStore<Record: Codable & Identifiable> where Record.ID: Hashable
     }
 
     func save(_ records: [Record], version: Int) throws {
+        Self.transactionLock.lock(); defer { Self.transactionLock.unlock() }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try encoder.encode(StoredDataEnvelope(version: version, records: records))
             try data.write(to: fileURL, options: [.atomic])
         } catch { throw V2PersistenceError.writeFailed }
     }
+
+    func update(version: Int, _ mutation: (inout [Record]) -> Void) throws {
+        Self.transactionLock.lock(); defer { Self.transactionLock.unlock() }
+        var records = try load(version: version)
+        mutation(&records)
+        try save(records, version: version)
+    }
 }
+
+enum LocalFileTransactions { static let lock = NSRecursiveLock() }
 
 actor FileUserPreferencesRepository: UserPreferencesRepository {
     private let fileURL: URL
@@ -167,7 +181,8 @@ actor V2MigrationCoordinator {
     func migrateIfNeeded() async -> V2MigrationReport {
         recoveryIssues = []
         let markerURL = rootURL.appendingPathComponent("V2/migration-v2-complete.json")
-        if let data = try? Data(contentsOf: markerURL), let report = try? JSONDecoder().decode(V2MigrationReport.self, from: data) { return report }
+        let markerDecoder = JSONDecoder(); markerDecoder.dateDecodingStrategy = .iso8601
+        if let data = try? Data(contentsOf: markerURL), let report = try? markerDecoder.decode(V2MigrationReport.self, from: data), report.succeeded, report.toVersion == Self.currentVersion { return report }
 
         var failures: [String] = []
         var migratedReceipts = 0
@@ -262,6 +277,7 @@ actor V2MigrationCoordinator {
         struct LegacyReceipt: Codable { var id: UUID; var name: String; var imageFilename: String; var thumbnailFilename: String?; var createdAt: Date; var updatedAt: Date }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let envelope = try decoder.decode(StoredDataEnvelope<LegacyReceipt>.self, from: Data(contentsOf: legacyURL))
+        guard (1...Self.currentVersion).contains(envelope.version) else { throw V2PersistenceError.unsupportedSchema(found: envelope.version, supported: Self.currentVersion) }
         let destinationImages = rootURL.appendingPathComponent("V2/Receipts/Images", isDirectory: true)
         let destinationThumbnails = rootURL.appendingPathComponent("V2/Receipts/Thumbnails", isDirectory: true)
         try fileManager.createDirectory(at: destinationImages, withIntermediateDirectories: true)
@@ -320,7 +336,8 @@ actor V2MigrationCoordinator {
         let notesURL = rootURL.appendingPathComponent("Notes/notes.json")
         guard fileManager.fileExists(atPath: notesURL.path) else { return }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        _ = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL))
+        let envelope = try decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL))
+        guard envelope.version == 1 else { throw V2PersistenceError.unsupportedSchema(found: envelope.version, supported: 1) }
     }
 
     struct LegacyNoteMigrationResult {
@@ -337,8 +354,8 @@ actor V2MigrationCoordinator {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         var notes: [SavedNote] = []
         if fileManager.fileExists(atPath: notesURL.path) {
-            guard let existing = try? decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)).records else { return [] }
-            notes = existing
+            guard let existing = try? decoder.decode(StoredDataEnvelope<SavedNote>.self, from: Data(contentsOf: notesURL)), existing.version == 1 else { return [] }
+            notes = existing.records
         }
         var results: [LegacyNoteMigrationResult] = []
         for file in candidates {
@@ -438,6 +455,8 @@ actor FileReceiptRepository: ReceiptRepository {
         let stagedImageURL = temporaryDir.appendingPathComponent("create-\(token)-\(imageName)")
         let stagedThumbURL = temporaryDir.appendingPathComponent("create-\(token)-\(thumbName)")
         var record = draft; record.imageFilename = imageName; record.thumbnailFilename = thumbName
+        var installedImage = false
+        var installedThumbnail = false
         do {
             try fullData.write(to: stagedImageURL, options: [.atomic]); try thumbData.write(to: stagedThumbURL, options: [.atomic])
             guard UIImage(contentsOfFile: stagedImageURL.path) != nil, UIImage(contentsOfFile: stagedThumbURL.path) != nil else { throw ReceiptStorageError.imageWrite }
@@ -445,12 +464,15 @@ actor FileReceiptRepository: ReceiptRepository {
             guard !fileManager.fileExists(atPath: imageURL.path), !fileManager.fileExists(atPath: thumbURL.path) else { throw ReceiptStorageError.imageWrite }
             _ = try loadRecords() // validate existing metadata before final file moves
             try fileManager.moveItem(at: stagedImageURL, to: imageURL)
+            installedImage = true
             try fileManager.moveItem(at: stagedThumbURL, to: thumbURL)
+            installedThumbnail = true
             try persistReceipt(record)
             return record
         } catch {
             try? fileManager.removeItem(at: stagedImageURL); try? fileManager.removeItem(at: stagedThumbURL)
-            try? fileManager.removeItem(at: imageURL); try? fileManager.removeItem(at: thumbURL)
+            if installedImage { try? fileManager.removeItem(at: imageURL) }
+            if installedThumbnail { try? fileManager.removeItem(at: thumbURL) }
             throw error
         }
     }
@@ -481,6 +503,8 @@ actor FileReceiptRepository: ReceiptRepository {
         let oldThumbBackupURL = temporaryDir.appendingPathComponent("old-\(UUID().uuidString)-\(thumbName)")
         var movedOldImage = false
         var movedOldThumb = false
+        var installedImage = false
+        var installedThumbnail = false
         do {
             try fullData.write(to: stagedImageURL, options: [.atomic])
             try thumbData.write(to: stagedThumbURL, options: [.atomic])
@@ -488,12 +512,14 @@ actor FileReceiptRepository: ReceiptRepository {
             if fileManager.fileExists(atPath: imageURL.path) { try fileManager.moveItem(at: imageURL, to: oldImageBackupURL); movedOldImage = true }
             if fileManager.fileExists(atPath: thumbURL.path) { try fileManager.moveItem(at: thumbURL, to: oldThumbBackupURL); movedOldThumb = true }
             try fileManager.moveItem(at: stagedImageURL, to: imageURL)
+            installedImage = true
             try fileManager.moveItem(at: stagedThumbURL, to: thumbURL)
+            installedThumbnail = true
         } catch {
             try? fileManager.removeItem(at: stagedImageURL)
             try? fileManager.removeItem(at: stagedThumbURL)
-            try? fileManager.removeItem(at: imageURL)
-            try? fileManager.removeItem(at: thumbURL)
+            if installedImage { try? fileManager.removeItem(at: imageURL) }
+            if installedThumbnail { try? fileManager.removeItem(at: thumbURL) }
             if movedOldImage { try? fileManager.moveItem(at: oldImageBackupURL, to: imageURL) }
             if movedOldThumb { try? fileManager.moveItem(at: oldThumbBackupURL, to: thumbURL) }
             throw ReceiptStorageError.imageWrite
@@ -599,8 +625,8 @@ actor FileCalculationRepository: CalculationRepository {
         store = CodableFileStore(fileURL: root.appendingPathComponent("V2/Calculations/calculations.json"))
     }
     func fetchCalculations() async throws -> [SavedCalculationRecord] { try await store.load(version: V2MigrationCoordinator.currentVersion) }
-    func saveCalculation(_ record: SavedCalculationRecord) async throws { var records = try await fetchCalculations(); records.removeAll { $0.id == record.id }; records.insert(record, at: 0); try await store.save(records, version: V2MigrationCoordinator.currentVersion) }
-    func deleteCalculation(id: UUID) async throws { var records = try await fetchCalculations(); records.removeAll { $0.id == id }; try await store.save(records, version: V2MigrationCoordinator.currentVersion) }
+    func saveCalculation(_ record: SavedCalculationRecord) async throws { try await store.update(version: V2MigrationCoordinator.currentVersion) { records in records.removeAll { $0.id == record.id }; records.insert(record, at: 0) } }
+    func deleteCalculation(id: UUID) async throws { try await store.update(version: V2MigrationCoordinator.currentVersion) { records in records.removeAll { $0.id == id } } }
 }
 
 // MARK: - Repositories and Services
@@ -616,10 +642,11 @@ actor FileCurrencyRateRepository: CurrencyRateRepository {
     func saveRateSnapshot(_ snapshot: CurrencyConversionSnapshot) async throws {
         let source = snapshot.sourceCurrencyCode.uppercased(), destination = snapshot.destinationCurrencyCode.uppercased()
         guard FrankfurterSupportedCurrencies.codes.contains(source), FrankfurterSupportedCurrencies.codes.contains(destination), snapshot.rate > 0 else { return }
-        var records = try await store.load(version: V2MigrationCoordinator.currentVersion).filter { !($0.sourceCode == source && $0.destinationCode == destination) }
-        records.insert(StoredExchangeRate(sourceCode: source, destinationCode: destination, rate: snapshot.rate, rateDate: snapshot.rateDate, fetchedAt: snapshot.fetchedAt), at: 0)
-        if records.count > 50 { records = Array(records.prefix(50)) }
-        try await store.save(records, version: V2MigrationCoordinator.currentVersion)
+        try await store.update(version: V2MigrationCoordinator.currentVersion) { records in
+            records.removeAll { $0.sourceCode == source && $0.destinationCode == destination }
+            records.insert(StoredExchangeRate(sourceCode: source, destinationCode: destination, rate: snapshot.rate, rateDate: snapshot.rateDate, fetchedAt: snapshot.fetchedAt), at: 0)
+            if records.count > 50 { records = Array(records.prefix(50)) }
+        }
     }
 }
 
